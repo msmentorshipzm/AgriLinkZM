@@ -1,0 +1,6 @@
+{
+  "name": "AgriLink ZM",
+  "description": "Zambia's digital agricultural marketplace and advertising platform connecting farmers, livestock producers, and agro-dealers directly with buyers across all 10 provinces.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
