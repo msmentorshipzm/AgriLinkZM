@@ -322,13 +322,13 @@ export function loadState(): MarketplaceState {
     });
     const rawUsers = (parsed.users || seed.users).map((u) => {
       let patched =
-        u.id === 'usr-admin-1' && u.email === 'admin@agrilink.zm'
-          ? { ...u, email: 'agrilinkzm0@gmail.com' }
+        u.id === 'usr-admin-1' || u.email.toLowerCase() === 'agrilinkzm0@gmail.com'
+          ? { ...u, id: 'usr-admin-1', role: 'super_admin' as const, email: 'agrilinkzm0@gmail.com', emailVerified: true }
           : u;
       if (patched.id === 'usr-admin-1' && patched.phone === '+260966441200') {
         patched = { ...patched, phone: '+260976405828', whatsapp: '+260976405828' };
       }
-      if (patched.id === 'usr-admin-1' && patched.name === 'Chanda Mulenga') {
+      if (patched.id === 'usr-admin-1' && (patched.name === 'Chanda Mulenga' || !patched.name)) {
         patched = { ...patched, name: 'Milimo Siabana' };
       }
       return {
