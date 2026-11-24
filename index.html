@@ -3,6 +3,68 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function() {
+        const OrigWebSocket = window.WebSocket;
+        if (!OrigWebSocket) return;
+        window.WebSocket = function(url, protocols) {
+          const isHmr = Array.isArray(protocols)
+            ? protocols.includes('vite-hmr')
+            : protocols === 'vite-hmr';
+          if (isHmr) {
+            const listeners = new Map();
+            const fakeWs = {
+              readyState: 1,
+              CONNECTING: 0,
+              OPEN: 1,
+              CLOSING: 2,
+              CLOSED: 3,
+              url: String(url),
+              protocol: 'vite-hmr',
+              bufferedAmount: 0,
+              extensions: '',
+              binaryType: 'blob',
+              send() {},
+              close() {
+                fakeWs.readyState = 3;
+                dispatch('close', { code: 1000, reason: 'Normal Closure', wasClean: true });
+              },
+              addEventListener(type, listener) {
+                if (!listeners.has(type)) listeners.set(type, new Set());
+                listeners.get(type).add(listener);
+                if (type === 'open') {
+                  setTimeout(() => {
+                    try { listener({ type: 'open' }); } catch {}
+                  }, 0);
+                }
+              },
+              removeEventListener(type, listener) {
+                listeners.get(type)?.delete(listener);
+              },
+              dispatchEvent(event) {
+                dispatch(event.type, event);
+                return true;
+              }
+            };
+            function dispatch(type, event) {
+              const set = listeners.get(type);
+              if (set) {
+                for (const fn of set) {
+                  try { fn(event); } catch {}
+                }
+              }
+            }
+            return fakeWs;
+          }
+          return new OrigWebSocket(url, protocols);
+        };
+        window.WebSocket.prototype = OrigWebSocket.prototype;
+        window.WebSocket.CONNECTING = OrigWebSocket.CONNECTING;
+        window.WebSocket.OPEN = OrigWebSocket.OPEN;
+        window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
+        window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
+      })();
+    </script>
     <title>AgriLink ZM — Zambian Agricultural Marketplace &amp; Directory</title>
     <meta name="description" content="Connecting Zambian smallholder farmers, commercial growers, livestock breeders, and agro-dealers directly to buyers across all 10 provinces." />
     <meta property="og:title" content="AgriLink ZM — Zambian Agricultural Marketplace &amp; Directory" />

@@ -2420,31 +2420,6 @@ function syncAllAccountStatuses(): void {
     res.json({ ok: true, remainingUsers: state.users.length, remainingListings: state.listings.length });
   });
 
-  if (!isProduction && !process.env.VERCEL) {
-    app.get('/@vite/client', async (_req, res) => {
-      try {
-        const clientPath = path.resolve(process.cwd(), 'node_modules/vite/dist/client/client.mjs');
-        let code = await fs.promises.readFile(clientPath, 'utf8');
-        code = code.replace(
-          'reject(/* @__PURE__ */ new Error("WebSocket closed without opened."));',
-          'resolve();'
-        );
-        res.setHeader('Content-Type', 'application/javascript');
-        res.send(code);
-      } catch {
-        res.setHeader('Content-Type', 'application/javascript');
-        res.send(`
-          export class ErrorOverlay extends HTMLElement {}
-          export function createHotContext() { return { accept() {}, dispose() {}, invalidate() {}, on() {}, off() {}, send() {} }; }
-          export function updateStyle() {}
-          export function removeStyle() {}
-          export function injectQuery(u) { return u; }
-          export default { ErrorOverlay, createHotContext, updateStyle, removeStyle, injectQuery };
-        `);
-      }
-    });
-  }
-
   if (isProduction || process.env.VERCEL) {
     const distDir = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distDir));
