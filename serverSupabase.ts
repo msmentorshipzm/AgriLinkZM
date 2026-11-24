@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { MarketplaceState, ServerUserAccount } from './src/types/marketplace.ts';
+import type { MarketplaceState, ServerUserAccount } from './src/types/marketplace.js';
 import {
   analyticsEventToRow,
   blacklistToRow,
@@ -40,7 +40,7 @@ import {
   type ReviewRow,
   type ScamReportRow,
   type UserRow,
-} from './src/utils/supabaseMapper.ts';
+} from './src/utils/supabaseMapper.js';
 
 let cachedAdminClient: SupabaseClient | null = null;
 let syncQueue: Promise<void> = Promise.resolve();

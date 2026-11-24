@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
 import { GoogleGenAI } from '@google/genai';
-import type { ServerUserAccount, UserAccount } from './src/types/marketplace.ts';
+import type { ServerUserAccount, UserAccount } from './src/types/marketplace.js';
 import {
   BREVO_SEND_ENDPOINT,
   buildBrevoEmailPayload,
   hasConfiguredBrevoKey,
   resolveBrevoSender,
-} from './src/utils/emailProvider.ts';
+} from './src/utils/emailProvider.js';
 
 const EPHEMERAL_SESSION_SECRET = crypto.randomBytes(32).toString('hex');
 

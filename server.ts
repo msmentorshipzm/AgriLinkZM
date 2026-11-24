@@ -6,14 +6,14 @@ import path from 'node:path';
 import type { Response } from 'express';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
-import { getDistrictCoordinates } from './src/data/zambia.ts';
-import { hashIdentifier, initDatabaseStore, loadState, saveState } from './serverStore.ts';
+import { getDistrictCoordinates } from './src/data/zambia.js';
+import { hashIdentifier, initDatabaseStore, loadState, saveState } from './serverStore.js';
 import {
   deleteUserFromSupabaseAuth,
   isSupabaseServerConfigured,
   syncUserToSupabaseAuth,
   verifySupabaseAccessToken,
-} from './serverSupabase.ts';
+} from './serverSupabase.js';
 import {
   dispatchPlatformEmail,
   generateTempPassword,
@@ -28,13 +28,13 @@ import {
   verifySessionToken,
   type GeminiAssistantRoleId,
   type GeminiSpeedTier,
-} from './serverSecurity.ts';
+} from './serverSecurity.js';
 import {
   generateStaffUsername,
   resolveDelegatedPermissions,
   validatePasswordStrength,
-} from './src/utils/authRules.ts';
-import { assignSystemId, normalizeSystemIdInput } from './src/utils/adminReporting.ts';
+} from './src/utils/authRules.js';
+import { assignSystemId, normalizeSystemIdInput } from './src/utils/adminReporting.js';
 import type {
   AnalyticsStreamEvent,
   ChatConversation,
@@ -48,7 +48,7 @@ import type {
   ServerUserAccount,
   StaffPermission,
   UserAccount,
-} from './src/types/marketplace.ts';
+} from './src/types/marketplace.js';
 import {
   canBuyerRateSeller,
   computeTrialStatus,
@@ -58,8 +58,8 @@ import {
   isBuyerFeeEligible,
   normalizeZambianPhone,
   shouldAutoFreezeListing,
-} from './src/utils/marketplaceRules.ts';
-import { evaluateUserPendingPayment } from './src/utils/billingNotifications.ts';
+} from './src/utils/marketplaceRules.js';
+import { evaluateUserPendingPayment } from './src/utils/billingNotifications.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const isProduction = process.env.NODE_ENV === 'production';
@@ -2392,6 +2392,33 @@ function syncAllAccountStatuses(): void {
     });
     res.json({ ok: true, remainingUsers: state.users.length, remainingListings: state.listings.length });
   });
+
+  if (!isProduction && !process.env.VERCEL) {
+    app.get('/@vite/client', (_req, res) => {
+      res.setHeader('Content-Type', 'application/javascript');
+      res.send(`
+        console.info('[Vite HMR Shim] Connected');
+        window.__vite_plugin_react_preamble_installed__ = true;
+        export function createHotContext(ownerPath) {
+          return {
+            accept: (cb) => {},
+            dispose: (cb) => {},
+            invalidate: () => window.location.reload(),
+            on: (event, cb) => {},
+            off: (event, cb) => {},
+            send: (event, data) => {}
+          };
+        }
+        export function updateStyle() {}
+        export function injectQuery() {}
+        export default {
+          createHotContext,
+          updateStyle,
+          injectQuery
+        };
+      `);
+    });
+  }
 
   if (isProduction || process.env.VERCEL) {
     const distDir = path.resolve(process.cwd(), 'dist');

@@ -8,13 +8,13 @@ import type {
   EmailNotificationRecord,
   MarketplaceState,
   ServerUserAccount,
-} from './src/types/marketplace.ts';
-import { assignSystemId } from './src/utils/adminReporting.ts';
+} from './src/types/marketplace.js';
+import { assignSystemId } from './src/utils/adminReporting.js';
 import {
   enqueueSupabaseSync,
   isSupabaseServerConfigured,
   loadMarketplaceStateFromSupabase,
-} from './serverSupabase.ts';
+} from './serverSupabase.js';
 
 const DATA_DIR = path.resolve(process.cwd(), '.data');
 const DB_FILE = path.join(DATA_DIR, 'agrilink-db.json');
