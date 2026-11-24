@@ -56,6 +56,7 @@ import {
   computeTrialStatus,
   formatZMW,
   getPublicListingCoordinates,
+  getTierWeight,
   isAccountDormant,
   isBuyerFeeEligible,
   normalizeZambianPhone,
@@ -933,8 +934,9 @@ function syncAllAccountStatuses(): void {
   // Listings CRUD with geolocation & privacy settings
   app.post('/api/listings', (req, res) => {
     const actor = getActor(req);
-    if (!actor || (actor.role !== 'advertiser' && actor.role !== 'super_admin')) {
-      res.status(403).json({ error: 'Only verified Advertisers can publish listings.' });
+    const actorTierWeight = actor ? getTierWeight(actor.verificationTier) : 0;
+    if (!actor || (actor.role !== 'advertiser' && actor.role !== 'buyer' && actor.role !== 'super_admin') || actorTierWeight < 1) {
+      res.status(403).json({ error: 'Only ID Verified (Tier 1+) users can publish listings.' });
       return;
     }
     const trialEval = computeTrialStatus(actor, state.config);
