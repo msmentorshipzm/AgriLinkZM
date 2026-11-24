@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import crypto from 'node:crypto';
 import http from 'node:http';
 import express from 'express';
@@ -6,7 +7,13 @@ import type { Response } from 'express';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
 import { getDistrictCoordinates } from './src/data/zambia.ts';
-import { hashIdentifier, loadState, saveState } from './serverStore.ts';
+import { hashIdentifier, initDatabaseStore, loadState, saveState } from './serverStore.ts';
+import {
+  deleteUserFromSupabaseAuth,
+  isSupabaseServerConfigured,
+  syncUserToSupabaseAuth,
+  verifySupabaseAccessToken,
+} from './serverSupabase.ts';
 import {
   dispatchPlatformEmail,
   generateTempPassword,
@@ -45,12 +52,14 @@ import type {
 import {
   canBuyerRateSeller,
   computeTrialStatus,
+  formatZMW,
   getPublicListingCoordinates,
   isAccountDormant,
   isBuyerFeeEligible,
   normalizeZambianPhone,
   shouldAutoFreezeListing,
 } from './src/utils/marketplaceRules.ts';
+import { evaluateUserPendingPayment } from './src/utils/billingNotifications.ts';
 
 const PORT = Number(process.env.PORT || 3000);
 const isProduction = process.env.NODE_ENV === 'production';
@@ -150,6 +159,103 @@ function sanitizeListingsForActor(actor: UserAccount | null): Listing[] {
   });
 }
 
+function ensureBillingSupportChatMessage(
+  targetUser: ServerUserAccount,
+  params: {
+    text: string;
+    noticeKey?: string;
+    paymentType?: 'advertiser_subscription' | 'buyer_account_fee';
+    amountZmw?: number;
+  }
+): boolean {
+  const admin = state.users.find((u) => u.id === 'usr-admin-1');
+  const adminId = admin?.id || 'usr-admin-1';
+  const now = Date.now();
+
+  let conversation = state.conversations.find(
+    (c) =>
+      c.kind === 'billing_support' &&
+      c.buyerId === targetUser.id &&
+      c.sellerId === adminId
+  );
+
+  let createdConversation = false;
+  if (!conversation) {
+    conversation = {
+      id: `conv-bill-${targetUser.id}`,
+      kind: 'billing_support',
+      listingTitle: 'AgriLink ZM Billing & Account Notices',
+      sellerId: adminId,
+      sellerName: 'AgriLink ZM Billing Desk',
+      buyerId: targetUser.id,
+      buyerName: targetUser.businessName || targetUser.name,
+      createdAt: now,
+      updatedAt: now,
+    };
+    state.conversations.unshift(conversation);
+    createdConversation = true;
+  }
+
+  if (params.noticeKey) {
+    const alreadySent = state.messages.some(
+      (m) => m.conversationId === conversation!.id && m.noticeKey === params.noticeKey
+    );
+    if (alreadySent) {
+      return createdConversation;
+    }
+  }
+
+  const msg: ChatMessage = {
+    id: `msg-${crypto.randomUUID().slice(0, 8)}`,
+    conversationId: conversation.id,
+    senderId: adminId,
+    senderName: 'AgriLink ZM Billing Desk',
+    senderRole: 'super_admin',
+    type: 'payment_notice',
+    text: params.text,
+    noticeKey: params.noticeKey,
+    paymentType: params.paymentType,
+    amountZmw: params.amountZmw,
+    createdAt: now,
+  };
+
+  state.messages.push(msg);
+  conversation.updatedAt = now;
+
+  if (createdConversation) {
+    sendChatPayloadToUsers([conversation.buyerId, conversation.sellerId], {
+      type: 'conversation:created',
+      conversation,
+    });
+  }
+  sendChatPayloadToUsers([conversation.buyerId, conversation.sellerId], {
+    type: 'message:created',
+    message: msg,
+    conversation,
+  });
+
+  return true;
+}
+
+function syncPendingPaymentChatNotices(now: number = Date.now()): boolean {
+  if (!state.config.advertiserPaymentRequired && !state.config.buyerFeeEnabled) {
+    return false;
+  }
+  let changed = false;
+  for (const user of state.users) {
+    const pending = evaluateUserPendingPayment(user, state.config, state.payments, now);
+    if (!pending) continue;
+    const updated = ensureBillingSupportChatMessage(user, {
+      text: pending.chatMessageText,
+      noticeKey: pending.noticeKey,
+      paymentType: pending.paymentType,
+      amountZmw: pending.amountZmw,
+    });
+    if (updated) changed = true;
+  }
+  return changed;
+}
+
 function syncAllAccountStatuses(): void {
   const now = Date.now();
   let changed = false;
@@ -180,12 +286,23 @@ function syncAllAccountStatuses(): void {
       }
     }
   }
+  if (syncPendingPaymentChatNotices(now)) {
+    changed = true;
+  }
   if (changed) saveState(state);
 }
 
 async function startServer() {
+  state = await initDatabaseStore();
   const app = express();
   app.use(express.json({ limit: '8mb' }));
+
+  app.get('/api/health', (_req, res) => {
+    res.json({
+      ok: true,
+      persistence: isSupabaseServerConfigured() ? 'supabase' : 'local_json',
+    });
+  });
 
   const httpServer = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true });
@@ -316,7 +433,7 @@ async function startServer() {
   });
 
   // One-time Super Admin password claim (when ADMIN_PASSCODE env var is unset and no password claimed yet)
-  app.post('/api/auth/claim-admin', (req, res) => {
+  app.post('/api/auth/claim-admin', async (req, res) => {
     if (!isAdminSetupRequired()) {
       res.status(409).json({
         error: 'Super Admin password is already configured. Sign in using your password.',
@@ -338,10 +455,45 @@ async function startServer() {
     admin.emailVerified = true;
     admin.mustChangePassword = false;
     admin.lastActiveAt = Date.now();
+    const authUid = await syncUserToSupabaseAuth(admin, password!);
+    if (authUid) admin.authUserId = authUid;
     saveState(state);
 
     const token = signSessionToken(admin.id);
     res.json({ user: sanitizeUserForClient(admin), token });
+  });
+
+  // Auth: Exchange verified Supabase Auth JWT for AgriLink ZM session
+  app.post('/api/auth/supabase-session', async (req, res) => {
+    const { accessToken } = req.body as { accessToken?: string };
+    if (!accessToken?.trim()) {
+      res.status(400).json({ error: 'Supabase access token is required.' });
+      return;
+    }
+    const supaUser = await verifySupabaseAccessToken(accessToken.trim());
+    if (!supaUser || !supaUser.email) {
+      res.status(401).json({ error: 'Invalid or expired Supabase session.' });
+      return;
+    }
+    const normalizedEmail = supaUser.email.toLowerCase();
+    const matched = state.users.find(
+      (u) => u.authUserId === supaUser.id || u.email.toLowerCase() === normalizedEmail
+    );
+    if (!matched) {
+      res.status(404).json({ error: 'No matching AgriLink ZM profile found for this email.' });
+      return;
+    }
+    if (matched.accountStatus === 'banned' || matched.accountStatus === 'frozen' || matched.accountStatus === 'suspended') {
+      res.status(403).json({ error: `Account is currently ${matched.accountStatus}.` });
+      return;
+    }
+    matched.authUserId = supaUser.id;
+    matched.emailVerified = Boolean(supaUser.email_confirmed_at || matched.emailVerified);
+    matched.lastActiveAt = Date.now();
+    saveState(state);
+
+    const token = signSessionToken(matched.id);
+    res.json({ user: sanitizeUserForClient(matched), token });
   });
 
   // Auth: Password required on EVERY login (matches email, username, or normalized phone)
@@ -570,6 +722,11 @@ async function startServer() {
       createdAt: now,
     };
 
+    const authUid = await syncUserToSupabaseAuth(newUser, password);
+    if (authUid) {
+      newUser.authUserId = authUid;
+    }
+
     state.users.push(newUser);
     state.emailNotifications.unshift(notificationRecord);
     saveState(state);
@@ -585,7 +742,7 @@ async function startServer() {
   });
 
   // Auth: Verify account via 6-digit code
-  app.post('/api/auth/verify-email', (req, res) => {
+  app.post('/api/auth/verify-email', async (req, res) => {
     const { identifier, code } = req.body as { identifier?: string; code?: string };
     if (!identifier?.trim() || !code?.trim()) {
       res.status(400).json({ error: 'Email/username and 6-digit verification code are required.' });
@@ -618,6 +775,8 @@ async function startServer() {
     user.emailVerified = true;
     user.verificationCodeHash = undefined;
     user.verificationExpiresAt = undefined;
+    const authUid = await syncUserToSupabaseAuth(user);
+    if (authUid) user.authUserId = authUid;
     saveState(state);
 
     res.json({
@@ -709,6 +868,8 @@ async function startServer() {
     actor.passwordHash = hashPassword(newPassword);
     actor.mustChangePassword = false;
     actor.lastActiveAt = Date.now();
+    const authUid = await syncUserToSupabaseAuth(actor, newPassword);
+    if (authUid) actor.authUserId = authUid;
 
     const deliveryMode = await dispatchPlatformEmail({
       toEmail: actor.email,
@@ -1209,10 +1370,18 @@ async function startServer() {
       return;
     }
 
+    const qNum = Number(productQuality);
+    const cNum = Number(communication);
+    const pNum = Number(pricingHonesty);
+    if (!Number.isFinite(qNum) || !Number.isFinite(cNum) || !Number.isFinite(pNum)) {
+      res.status(400).json({ error: 'Valid 1–5 scores for quality, communication, and pricing honesty are required.' });
+      return;
+    }
+
     const clamp = (n: number) => Math.min(5, Math.max(1, Math.round(n)));
-    const q = clamp(productQuality);
-    const c = clamp(communication);
-    const p = clamp(pricingHonesty);
+    const q = clamp(qNum);
+    const c = clamp(cNum);
+    const p = clamp(pNum);
     const overall = Math.round((((q + c + p) / 3) + Number.EPSILON) * 10) / 10;
 
     const existing = state.reviews.find((r) => r.buyerId === actor.id && r.sellerId === sellerId);
@@ -1414,6 +1583,12 @@ async function startServer() {
       createdAt: Date.now(),
     };
     state.payments.unshift(payment);
+    ensureBillingSupportChatMessage(actor, {
+      text: `Pending Payment Notice: Your ${network} Proof of Payment (${formatZMW(amountZmw)}, Ref ${payment.referenceCode}, TxID ${payment.transactionId}) is queued for verification. We will notify you here once verified.`,
+      noticeKey: `pop-submitted-${payment.id}`,
+      paymentType,
+      amountZmw,
+    });
     broadcastEvent({
       id: `evt-${crypto.randomUUID().slice(0, 8)}`,
       type: 'payment_update',
@@ -1475,6 +1650,16 @@ async function startServer() {
     }
     actor.lastActiveAt = now;
 
+    const hasBillingThread = state.conversations.some(
+      (c) => c.kind === 'billing_support' && c.buyerId === actor.id
+    );
+    if (hasBillingThread) {
+      ensureBillingSupportChatMessage(actor, {
+        text: `Payment Confirmed: Your ${network} Flutterwave payment (${formatZMW(amountZmw)}, Ref ${payment.referenceCode}) is verified. Your 30-day access is now active.`,
+        noticeKey: `paid-confirmed-${payment.id}`,
+      });
+    }
+
     broadcastEvent({
       id: `evt-${crypto.randomUUID().slice(0, 8)}`,
       type: 'payment_update',
@@ -1516,6 +1701,20 @@ async function startServer() {
             }
           }
         }
+        ensureBillingSupportChatMessage(targetUser, {
+          text: `Payment Approved: Your ${payment.network} payment (${formatZMW(payment.amountZmw)}, Ref ${payment.referenceCode}) was verified by ${actor!.name}. Your account is active for 30 days.`,
+          noticeKey: `paid-approved-${payment.id}`,
+        });
+      }
+    } else if (decision === 'rejected') {
+      const targetUser = state.users.find((u) => u.id === payment.userId);
+      if (targetUser) {
+        ensureBillingSupportChatMessage(targetUser, {
+          text: `Payment Rejected: Your ${payment.network} Proof of Payment (Ref ${payment.referenceCode}) could not be verified${note ? `: ${note}` : ''}. Click Pay Now to submit a valid transaction or use instant Flutterwave USSD.`,
+          noticeKey: `paid-rejected-${payment.id}`,
+          paymentType: payment.paymentType,
+          amountZmw: payment.amountZmw,
+        });
       }
     }
 
@@ -1894,6 +2093,7 @@ async function startServer() {
       (s) => s.sellerId !== target.id && !removedListingIds.has(s.listingId)
     );
 
+    void deleteUserFromSupabaseAuth(target.authUserId);
     saveState(state);
     broadcastEvent({
       id: `evt-${crypto.randomUUID().slice(0, 8)}`,
@@ -1984,6 +2184,8 @@ async function startServer() {
       createdAt: now,
       savedListingIds: [],
     };
+    const staffAuthUid = await syncUserToSupabaseAuth(staff, tempPassword);
+    if (staffAuthUid) staff.authUserId = staffAuthUid;
     state.users.push(staff);
 
     const emailBodyFull = [
@@ -2123,13 +2325,33 @@ async function startServer() {
     const { userId, channel } = req.body as { userId: string; channel: 'SMS' | 'WhatsApp' | 'In-App' };
     const target = state.users.find((u) => u.id === userId);
     if (!target) {
-      res.status(404).json({ error: 'Advertiser not found.' });
+      res.status(404).json({ error: 'User account not found.' });
       return;
     }
+    const pending = evaluateUserPendingPayment(target, state.config, state.payments);
+    const paymentType =
+      pending?.paymentType ||
+      (target.role === 'buyer' ? 'buyer_account_fee' : 'advertiser_subscription');
+    const amountZmw =
+      pending?.amountZmw ??
+      (paymentType === 'buyer_account_fee'
+        ? state.config.buyerFeeAmountZmw
+        : state.config.advertiserMonthlyFeeZmw);
+
+    if (channel === 'In-App') {
+      ensureBillingSupportChatMessage(target, {
+        text:
+          pending?.chatMessageText ||
+          `Billing Reminder from ${actor!.name}: Please complete your AgriLink ZM payment of ${formatZMW(amountZmw)} via Mobile Money. Click Pay Now below to settle.`,
+        paymentType,
+        amountZmw,
+      });
+    }
+
     broadcastEvent({
       id: `evt-${crypto.randomUUID().slice(0, 8)}`,
       type: 'payment_update',
-      message: `${channel} trial expiry / renewal reminder sent to ${target.name} (${target.phone})`,
+      message: `${channel} billing reminder sent to ${target.name} (${target.phone})`,
       timestamp: Date.now(),
     });
     res.json({ ok: true, sentTo: target.name, channel });

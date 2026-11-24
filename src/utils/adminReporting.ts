@@ -1,15 +1,22 @@
 import { PROVINCE_NAMES } from '../data/zambia.ts';
 import type {
+  AccountStatus,
   BlacklistRecord,
   ChatConversation,
   ChatMessage,
   KycSubmission,
   Listing,
   PaymentRecord,
+  Review,
   ScamReport,
   UserAccount,
   UserRole,
+  VerificationTier,
 } from '../types/marketplace.ts';
+import {
+  computeSellerAggregateRating,
+  type SellerRatingSummary,
+} from './marketplaceRules.ts';
 
 const ROLE_PREFIX: Record<UserRole, string> = {
   super_admin: 'ADM',
@@ -282,4 +289,101 @@ export function buildCsvExport(
     lines.push(row.map(escapeCsvCell).join(','));
   }
   return lines.join('\n');
+}
+
+export interface ReportedListingOverview {
+  listingId: string;
+  listingTitle: string;
+  listingCategory: Listing['category'] | 'Unknown';
+  listingPriceZmw: number;
+  listingProvince: string;
+  listingDistrict: string;
+  listingStatus: Listing['status'] | 'removed';
+  listing?: Listing;
+  sellerId: string;
+  sellerName: string;
+  sellerBusinessName?: string;
+  sellerSystemId?: string;
+  sellerVerificationTier: VerificationTier;
+  sellerAccountStatus: AccountStatus;
+  sellerRating: SellerRatingSummary;
+  totalReportsCount: number;
+  openReportsCount: number;
+  resolvedReportsCount: number;
+  dismissedReportsCount: number;
+  sellerTotalReportsCount: number;
+  latestReportAt: number;
+  reasons: string[];
+  reports: ScamReport[];
+}
+
+export function buildReportedListingsOverview(params: {
+  scamReports: ScamReport[];
+  listings: Listing[];
+  users: UserAccount[];
+  reviews: Review[];
+}): ReportedListingOverview[] {
+  const { scamReports, listings, users, reviews } = params;
+  if (scamReports.length === 0) return [];
+
+  const listingById = new Map(listings.map((l) => [l.id, l]));
+  const userById = new Map(users.map((u) => [u.id, u]));
+
+  const sellerTotalReports = new Map<string, number>();
+  for (const sr of scamReports) {
+    sellerTotalReports.set(sr.sellerId, (sellerTotalReports.get(sr.sellerId) || 0) + 1);
+  }
+
+  const groupedByListing = new Map<string, ScamReport[]>();
+  for (const sr of scamReports) {
+    const existing = groupedByListing.get(sr.listingId);
+    if (existing) existing.push(sr);
+    else groupedByListing.set(sr.listingId, [sr]);
+  }
+
+  const rows: ReportedListingOverview[] = [];
+  for (const [listingId, reports] of groupedByListing.entries()) {
+    const sortedReports = [...reports].sort((a, b) => b.createdAt - a.createdAt);
+    const listing = listingById.get(listingId);
+    const sellerId = listing?.sellerId || sortedReports[0].sellerId;
+    const seller = userById.get(sellerId);
+    const sellerRating = computeSellerAggregateRating(reviews, sellerId);
+
+    const reasons = Array.from(new Set(sortedReports.map((r) => r.reason)));
+    rows.push({
+      listingId,
+      listingTitle: listing?.title || `Listing ${listingId}`,
+      listingCategory: listing?.category || 'Unknown',
+      listingPriceZmw: listing?.priceZmw ?? 0,
+      listingProvince: listing?.province || seller?.province || 'Unknown',
+      listingDistrict: listing?.district || seller?.district || 'Unknown',
+      listingStatus: listing?.status || 'removed',
+      listing,
+      sellerId,
+      sellerName: seller?.name || sortedReports[0].sellerId,
+      sellerBusinessName: seller?.businessName,
+      sellerSystemId: seller?.systemId,
+      sellerVerificationTier: seller?.verificationTier || 'unverified',
+      sellerAccountStatus: seller?.accountStatus || 'trial_active',
+      sellerRating,
+      totalReportsCount: sortedReports.length,
+      openReportsCount: sortedReports.filter((r) => r.status === 'open').length,
+      resolvedReportsCount: sortedReports.filter((r) => r.status === 'resolved_frozen').length,
+      dismissedReportsCount: sortedReports.filter((r) => r.status === 'dismissed').length,
+      sellerTotalReportsCount: sellerTotalReports.get(sellerId) || sortedReports.length,
+      latestReportAt: sortedReports[0].createdAt,
+      reasons,
+      reports: sortedReports,
+    });
+  }
+
+  return rows.sort((a, b) => {
+    if (b.openReportsCount !== a.openReportsCount) {
+      return b.openReportsCount - a.openReportsCount;
+    }
+    if (b.totalReportsCount !== a.totalReportsCount) {
+      return b.totalReportsCount - a.totalReportsCount;
+    }
+    return b.latestReportAt - a.latestReportAt;
+  });
 }

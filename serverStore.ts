@@ -10,6 +10,11 @@ import type {
   ServerUserAccount,
 } from './src/types/marketplace.ts';
 import { assignSystemId } from './src/utils/adminReporting.ts';
+import {
+  enqueueSupabaseSync,
+  isSupabaseServerConfigured,
+  loadMarketplaceStateFromSupabase,
+} from './serverSupabase.ts';
 
 const DATA_DIR = path.resolve(process.cwd(), '.data');
 const DB_FILE = path.join(DATA_DIR, 'agrilink-db.json');
@@ -25,7 +30,7 @@ function buildSeedState(): MarketplaceState {
   const users: ServerUserAccount[] = [
     {
       id: 'usr-admin-1',
-      name: 'Chanda Mulenga',
+      name: 'Milimo Siabana',
       username: 'superadmin',
       businessName: 'AgriLink ZM Operations',
       email: 'agrilinkzm0@gmail.com',
@@ -724,6 +729,9 @@ export function loadState(): MarketplaceState {
       if (patched.id === 'usr-admin-1' && patched.phone === '+260966441200') {
         patched = { ...patched, phone: '+260976405828', whatsapp: '+260976405828' };
       }
+      if (patched.id === 'usr-admin-1' && patched.name === 'Chanda Mulenga') {
+        patched = { ...patched, name: 'Milimo Siabana' };
+      }
       return {
         ...patched,
         emailVerified: patched.emailVerified ?? true,
@@ -748,12 +756,55 @@ export function loadState(): MarketplaceState {
     };
   } catch {
     const seed = buildSeedState();
-    fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf8');
+    try {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf8');
+    } catch {
+      // Ignore read-only filesystem errors when hosted in serverless/cloud environments
+    }
     return seed;
   }
 }
 
+export async function initDatabaseStore(): Promise<MarketplaceState> {
+  const localState = loadState();
+  if (!isSupabaseServerConfigured()) {
+    return localState;
+  }
+  const remoteState = await loadMarketplaceStateFromSupabase();
+  if (remoteState) {
+    let adminMigrated = false;
+    remoteState.users = remoteState.users.map((u) => {
+      if (u.id === 'usr-admin-1' && u.name === 'Chanda Mulenga') {
+        adminMigrated = true;
+        return { ...u, name: 'Milimo Siabana' };
+      }
+      return u;
+    });
+    if (adminMigrated) {
+      await enqueueSupabaseSync(remoteState);
+    }
+    try {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(DB_FILE, JSON.stringify(remoteState, null, 2), 'utf8');
+    } catch {
+      // Ignore read-only filesystem errors
+    }
+    return remoteState;
+  }
+  // Empty Supabase project: seed initial AgriLink ZM tables automatically
+  await enqueueSupabaseSync(localState);
+  return localState;
+}
+
 export function saveState(state: MarketplaceState): void {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2), 'utf8');
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2), 'utf8');
+  } catch {
+    // Ignore read-only filesystem errors when backed by Supabase
+  }
+  if (isSupabaseServerConfigured()) {
+    void enqueueSupabaseSync(state);
+  }
 }

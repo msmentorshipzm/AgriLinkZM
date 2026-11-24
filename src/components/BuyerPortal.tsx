@@ -4,10 +4,12 @@ import type {
   ChatConversation,
   ContactRevealRecord,
   Listing,
+  PaymentRecord,
   PlatformConfig,
   ScamReport,
   UserAccount,
 } from '../types/marketplace.ts';
+import { evaluateUserPendingPayment } from '../utils/billingNotifications.ts';
 import { formatZMW } from '../utils/marketplaceRules.ts';
 
 interface BuyerPortalProps {
@@ -18,6 +20,7 @@ interface BuyerPortalProps {
   contactReveals: ContactRevealRecord[];
   scamReports: ScamReport[];
   conversations: ChatConversation[];
+  payments?: PaymentRecord[];
   onInspectListing: (listing: Listing) => void;
   onToggleSave: (listingId: string) => void;
   onOpenPayment: () => void;
@@ -33,6 +36,7 @@ export const BuyerPortal: React.FC<BuyerPortalProps> = ({
   contactReveals,
   scamReports,
   conversations,
+  payments = [],
   onInspectListing,
   onToggleSave,
   onOpenPayment,
@@ -45,6 +49,7 @@ export const BuyerPortal: React.FC<BuyerPortalProps> = ({
   const myConversations = conversations.filter((c) => c.buyerId === currentUser.id);
   const buyerFeePaid =
     currentUser.buyerFeePaidUntilAt && currentUser.buyerFeePaidUntilAt > Date.now();
+  const pendingPayment = evaluateUserPendingPayment(currentUser, config, payments);
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -84,12 +89,13 @@ export const BuyerPortal: React.FC<BuyerPortalProps> = ({
             <ShieldCheck className="mt-0.5 h-5 w-5 text-[#1B5E20]" />
             <div>
               <div className="text-sm font-bold text-[#111827]">
-                Buyer Contact &amp; Inquiry Access Status
+                {pendingPayment ? pendingPayment.bannerTitle : 'Buyer Contact & Inquiry Access Status'}
               </div>
               <p className="mt-0.5 text-xs text-[#4B5563]">
                 {buyerFeePaid
                   ? `Active Buyer Access — Paid until ${new Date(currentUser.buyerFeePaidUntilAt!).toLocaleDateString()}.`
-                  : `Buyer Micro-Fee Active (${formatZMW(config.buyerFeeAmountZmw)}/mo) — Pay via Mobile Money to unlock seller Phone/WhatsApp contacts.`}
+                  : pendingPayment?.bannerDescription ||
+                    `Buyer Micro-Fee Active (${formatZMW(config.buyerFeeAmountZmw)}/mo) — Pay via Mobile Money to unlock seller Phone/WhatsApp contacts.`}
               </p>
             </div>
           </div>
@@ -98,9 +104,9 @@ export const BuyerPortal: React.FC<BuyerPortalProps> = ({
             <button
               type="button"
               onClick={onOpenPayment}
-              className="shrink-0 rounded-lg bg-[#C2410C] px-4 py-2 text-xs font-semibold text-white hover:bg-[#9A3412]"
+              className="shrink-0 rounded-lg bg-[#C2410C] px-4 py-2 text-xs font-semibold text-white hover:bg-[#9A3412] whitespace-nowrap"
             >
-              Pay {formatZMW(config.buyerFeeAmountZmw)} via Mobile Money
+              {pendingPayment?.buttonLabel || `Pay ${formatZMW(config.buyerFeeAmountZmw)} via Mobile Money`}
             </button>
           )}
         </div>

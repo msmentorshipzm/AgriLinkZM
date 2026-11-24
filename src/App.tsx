@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { KeyRound, MessageSquare } from 'lucide-react';
+import { CreditCard, KeyRound, MessageSquare } from 'lucide-react';
 import { AdminPortal, type DispatchedStaffEmail } from './components/AdminPortal.tsx';
 import { AdvertiserDashboard } from './components/AdvertiserDashboard.tsx';
 import { AuthModal, type AuthModalMode } from './components/AuthModal.tsx';
@@ -30,6 +30,7 @@ import type {
   UserAccount,
   VerificationTier,
 } from './types/marketplace.ts';
+import { evaluateUserPendingPayment } from './utils/billingNotifications.ts';
 import { filterAndRankListings } from './utils/marketplaceRules.ts';
 
 type ClientMarketplaceState = Omit<MarketplaceState, 'users' | 'emailNotifications'> & {
@@ -490,6 +491,11 @@ export default function App() {
   };
 
   const config = state?.config || FALLBACK_CONFIG;
+  const pendingPayment = useMemo(() => {
+    if (!currentUser || !state) return null;
+    return evaluateUserPendingPayment(currentUser, state.config, state.payments);
+  }, [currentUser, state]);
+
   const hasSeededData = Boolean(
     state?.users.some((u) => /^usr-(adv|buy|staff)-\d+$/.test(u.id)) ||
       state?.listings.some((l) => /^lst-\d+$/.test(l.id))
@@ -551,6 +557,52 @@ export default function App() {
         </div>
       )}
 
+      {pendingPayment && currentUser && activeView !== 'admin' && (
+        <div
+          data-testid="global-payment-prompt"
+          className={`border-b px-4 py-3 text-xs ${
+            pendingPayment.isOverdue && !pendingPayment.hasPendingManualPop
+              ? 'border-[#C2410C]/40 bg-[#FFF7ED] text-[#9A3412]'
+              : 'border-[#F59E0B]/40 bg-[#FFFBEB] text-[#78350F]'
+          }`}
+        >
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <CreditCard className="mt-0.5 h-4 w-4 shrink-0 text-[#C2410C]" />
+              <div>
+                <div className="font-bold text-[#111827]">{pendingPayment.bannerTitle}</div>
+                <div className="mt-0.5 text-[#374151]">{pendingPayment.bannerDescription}</div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPaymentModalType(pendingPayment.paymentType)}
+                className="rounded-lg bg-[#C2410C] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#9A3412]"
+              >
+                {pendingPayment.buttonLabel}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const billConv = state?.conversations.find(
+                    (c) =>
+                      c.kind === 'billing_support' &&
+                      (c.buyerId === currentUser.id || c.sellerId === currentUser.id)
+                  );
+                  if (billConv) setActiveConversationId(billConv.id);
+                  setMessagesOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#1B5E20] bg-white px-3 py-2 text-xs font-semibold text-[#1B5E20] hover:bg-[#EEF3EC]"
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                Open In-App Chat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {!state ? (
         <div className="mx-auto max-w-7xl px-4 py-24 text-center text-sm text-[#4B5563]">
           Loading AgriLink ZM marketplace across all 10 Zambian provinces...
@@ -561,6 +613,7 @@ export default function App() {
           config={config}
           listings={state.listings}
           reviews={state.reviews}
+          payments={state.payments}
           kycSubmissions={state.kycSubmissions}
           conversations={state.conversations}
           recentEvents={state.recentEvents}
@@ -598,6 +651,7 @@ export default function App() {
           config={config}
           listings={state.listings}
           sellersById={sellersById}
+          payments={state.payments}
           contactReveals={state.contactReveals}
           scamReports={state.scamReports}
           conversations={state.conversations}
@@ -615,6 +669,7 @@ export default function App() {
           config={config}
           users={state.users}
           listings={state.listings}
+          reviews={state.reviews}
           payments={state.payments}
           kycSubmissions={state.kycSubmissions}
           scamReports={state.scamReports}
@@ -624,6 +679,7 @@ export default function App() {
           recentEvents={state.recentEvents}
           emailNotifications={state.emailNotifications || []}
           onlineCount={onlineCount}
+          onInspectListing={(l) => setSelectedListingId(l.id)}
           onUpdateConfig={async (updates) => {
             const res = await apiCall('/api/admin/config', 'PATCH', updates);
             if (!res.error) await fetchBootstrap();
@@ -703,6 +759,7 @@ export default function App() {
           }}
           onSendBillingReminder={async (userId, channel) => {
             const res = await apiCall('/api/admin/billing-reminder', 'POST', { userId, channel });
+            if (!res.error) await fetchBootstrap();
             return res.error || null;
           }}
           onChangePassword={handleChangePassword}
@@ -797,14 +854,16 @@ export default function App() {
       {/* Docked Gemini Multi-Turn AI Assistant */}
       <GeminiChatbotDrawer />
 
-      {/* Quick In-App Messages Dock Button for Buyers & Advertisers */}
+      {/* Quick In-App Messages Dock Button for Buyers, Advertisers & Super Admin */}
       {currentUser &&
         state &&
-        (currentUser.role === 'buyer' || currentUser.role === 'advertiser') && (
+        (currentUser.role === 'buyer' ||
+          currentUser.role === 'advertiser' ||
+          currentUser.role === 'super_admin') && (
           <button
             type="button"
             onClick={() => setMessagesOpen(true)}
-            className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-lg border border-[#1B5E20] bg-[#1B5E20] px-4 py-2.5 text-xs font-semibold text-white shadow-lg transition-colors hover:bg-[#154A19]"
+            className="fixed bottom-16 right-4 z-40 mb-1 inline-flex items-center gap-2 rounded-lg border border-[#1B5E20] bg-[#1B5E20] px-4 py-2.5 text-xs font-semibold text-white shadow-lg transition-colors hover:bg-[#154A19]"
           >
             <MessageSquare className="h-4 w-4" />
             <span>
@@ -926,6 +985,8 @@ export default function App() {
             };
           }}
           onOpenBuyerFeeCheckout={() => setPaymentModalType('buyer_account_fee')}
+          pendingPaymentStatus={pendingPayment}
+          onOpenPaymentCheckout={(type) => setPaymentModalType(type)}
         />
       )}
 

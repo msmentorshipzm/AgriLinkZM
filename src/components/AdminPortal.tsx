@@ -9,14 +9,17 @@ import {
   CreditCard,
   Download,
   Edit3,
+  Eye,
   FileBarChart2,
   KeyRound,
   Mail,
+  MessageSquare,
   Search,
   ShieldAlert,
   ShieldCheck,
   Sliders,
   Snowflake,
+  Star,
   Trash2,
   UserCheck,
   Users,
@@ -35,6 +38,7 @@ import type {
   ListingStatus,
   PaymentRecord,
   PlatformConfig,
+  Review,
   ScamReport,
   StaffPermission,
   UserAccount,
@@ -44,6 +48,7 @@ import type {
 import {
   assignSystemId,
   buildCsvExport,
+  buildReportedListingsOverview,
   computePortalMetricsReport,
   normalizeSystemIdInput,
 } from '../utils/adminReporting.ts';
@@ -53,7 +58,13 @@ import {
   getRoleTemplateById,
   resolveDelegatedPermissions,
 } from '../utils/authRules.ts';
-import { computeTrialStatus, formatZMW, isBuyerFeeEligible } from '../utils/marketplaceRules.ts';
+import { evaluateUserPendingPayment } from '../utils/billingNotifications.ts';
+import {
+  computeSellerAggregateRating,
+  computeTrialStatus,
+  formatZMW,
+  isBuyerFeeEligible,
+} from '../utils/marketplaceRules.ts';
 
 export interface DispatchedStaffEmail {
   id: string;
@@ -75,6 +86,7 @@ interface AdminPortalProps {
   config: PlatformConfig;
   users: UserAccount[];
   listings: Listing[];
+  reviews: Review[];
   payments: PaymentRecord[];
   kycSubmissions: KycSubmission[];
   scamReports: ScamReport[];
@@ -84,6 +96,7 @@ interface AdminPortalProps {
   recentEvents: AnalyticsStreamEvent[];
   emailNotifications: EmailNotificationRecord[];
   onlineCount: number;
+  onInspectListing?: (listing: Listing) => void;
   onUpdateConfig: (updates: Partial<PlatformConfig>) => Promise<string | null>;
   onPaymentDecision: (paymentId: string, decision: 'approved' | 'rejected') => Promise<string | null>;
   onKycDecision: (kycId: string, decision: 'approved' | 'rejected') => Promise<string | null>;
@@ -188,6 +201,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   config,
   users,
   listings,
+  reviews,
   payments,
   kycSubmissions,
   scamReports,
@@ -197,6 +211,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   recentEvents,
   emailNotifications,
   onlineCount,
+  onInspectListing,
   onUpdateConfig,
   onPaymentDecision,
   onKycDecision,
@@ -286,6 +301,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         messages,
       }),
     [users, listings, payments, kycSubmissions, scamReports, blacklist, conversations, messages]
+  );
+
+  const reportedListings = useMemo(
+    () =>
+      buildReportedListingsOverview({
+        scamReports,
+        listings,
+        users,
+        reviews,
+      }),
+    [scamReports, listings, users, reviews]
   );
 
   const usersById = useMemo(() => {
@@ -1501,38 +1527,88 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           {/* Billing Follow-up Table */}
           <div className="rounded-xl border border-[#E5E7EB] bg-white lg:col-span-6">
             <div className="border-b border-[#E5E7EB] bg-[#F9FAF8] px-5 py-3.5 text-sm font-bold text-[#111827]">
-              Advertiser Trial Expiry &amp; Billing Follow-Up
+              Trial Expiry, Unpaid Users &amp; Billing Follow-Up
             </div>
-            <div className="divide-y divide-[#E5E7EB]">
-              {advertisers.map((adv) => {
-                const evalRes = computeTrialStatus(adv, config);
-                return (
-                  <div key={adv.id} className="flex flex-wrap items-center justify-between gap-3 p-4 text-xs">
-                    <div>
-                      <div className="font-bold text-[#111827]">{adv.businessName || adv.name}</div>
-                      <div className="text-[#4B5563]">
-                        {adv.phone} · Status: <strong>{evalRes.effectiveAccountStatus}</strong> ({evalRes.daysRemaining}d left)
+            <div className="max-h-[520px] divide-y divide-[#E5E7EB] overflow-y-auto">
+              {users
+                .filter(
+                  (u) =>
+                    u.role === 'advertiser' || (config.buyerFeeEnabled && u.role === 'buyer')
+                )
+                .map((member) => {
+                  const evalRes =
+                    member.role === 'advertiser' ? computeTrialStatus(member, config) : null;
+                  const pendingEval = evaluateUserPendingPayment(member, config, payments);
+                  return (
+                    <div
+                      key={member.id}
+                      className="flex flex-wrap items-center justify-between gap-3 p-4 text-xs"
+                    >
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2 font-bold text-[#111827]">
+                          <span>{member.businessName || member.name}</span>
+                          {member.systemId && (
+                            <span className="font-mono text-[11px] font-normal text-[#4B5563]">
+                              {member.systemId}
+                            </span>
+                          )}
+                          <span className="rounded border border-[#E5E7EB] bg-[#F9FAF8] px-1.5 py-0.5 text-[10px] font-semibold uppercase text-[#4B5563]">
+                            {member.role}
+                          </span>
+                          {pendingEval && (
+                            <span className="rounded border border-[#F59E0B]/50 bg-[#FFFBEB] px-1.5 py-0.5 text-[10px] font-semibold text-[#92400E]">
+                              {pendingEval.hasPendingManualPop
+                                ? 'PoP Pending'
+                                : `Unpaid · ${formatZMW(pendingEval.amountZmw)}`}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 text-[#4B5563]">
+                          {member.phone} · Status:{' '}
+                          <strong>
+                            {evalRes ? evalRes.effectiveAccountStatus : member.accountStatus}
+                          </strong>
+                          {evalRes ? ` (${evalRes.daysRemaining}d left)` : ''}
+                        </div>
                       </div>
+                      {hasPerm('billing_followup') && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              clearAlerts();
+                              const err = await onSendBillingReminder(member.id, 'In-App');
+                              if (err) setErrorMsg(err);
+                              else
+                                setFeedback(
+                                  `Automatic In-App Chat payment message sent to ${member.name}.`
+                                );
+                            }}
+                            className="inline-flex items-center gap-1 rounded-lg bg-[#1B5E20] px-2.5 py-1.5 font-semibold text-white hover:bg-[#154A19]"
+                          >
+                            <MessageSquare className="h-3.5 w-3.5" />
+                            In-App Chat Notice
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              clearAlerts();
+                              const err = await onSendBillingReminder(member.id, 'WhatsApp');
+                              if (err) setErrorMsg(err);
+                              else
+                                setFeedback(
+                                  `WhatsApp billing reminder queued for ${member.name}.`
+                                );
+                            }}
+                            className="rounded-lg border border-[#1B5E20] px-2.5 py-1.5 font-semibold text-[#1B5E20] hover:bg-[#EEF3EC]"
+                          >
+                            WhatsApp Notice
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    {hasPerm('billing_followup') && (
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            clearAlerts();
-                            const err = await onSendBillingReminder(adv.id, 'WhatsApp');
-                            if (err) setErrorMsg(err);
-                            else setFeedback(`WhatsApp billing reminder queued for ${adv.name}.`);
-                          }}
-                          className="rounded-lg border border-[#1B5E20] px-2.5 py-1.5 font-semibold text-[#1B5E20] hover:bg-[#EEF3EC]"
-                        >
-                          WhatsApp Notice
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           </div>
         </div>
@@ -1653,94 +1729,299 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
       {/* Tab 5: Trust & Blacklist */}
       {tab === 'trust' && hasPerm('moderate_trust') && (
-        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
-          <div className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-white lg:col-span-8">
-            <div className="border-b border-[#E5E7EB] bg-[#F9FAF8] px-5 py-3.5 text-sm font-bold text-[#111827]">
-              Community Scam Reports &amp; Auto-Freeze Moderation
+        <div className="mt-6 space-y-6">
+          {/* Reported Listings & Reported Advertiser Ratings */}
+          <div className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E5E7EB] bg-[#F9FAF8] px-5 py-3.5">
+              <div>
+                <div className="text-sm font-bold text-[#111827]">
+                  Reported Listings &amp; Reported Advertiser Ratings ({reportedListings.length})
+                </div>
+                <p className="text-xs text-[#4B5563]">
+                  Inspect every reported produce listing alongside the reported advertiser&apos;s verified star rating, review breakdown, and moderation status.
+                </p>
+              </div>
+              <span className="font-mono text-xs text-[#4B5563] tabular-nums">
+                {openScamReports.length} open report(s)
+              </span>
             </div>
-            <div className="divide-y divide-[#E5E7EB]">
-              {scamReports.map((sr) => {
-                const targetListing = listings.find((l) => l.id === sr.listingId);
-                return (
-                  <div key={sr.id} className="space-y-2 p-5 text-xs">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-bold text-[#111827]">
-                        {targetListing?.title || sr.listingId}
-                      </span>
-                      <span className="font-mono font-semibold uppercase text-[#C2410C]">
-                        Report: {sr.status} · Listing: {targetListing?.status || 'removed'}
-                      </span>
-                    </div>
-                    <div className="text-[#4B5563]">
-                      <strong>{sr.reason}:</strong> {sr.details} (Reported by {sr.reporterName})
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          clearAlerts();
-                          const err = await onScamDecision(sr.id, 'dismiss');
-                          if (err) setErrorMsg(err);
-                          else setFeedback('Report dismissed and listing cleared if below threshold.');
-                        }}
-                        className="rounded-lg border border-[#E5E7EB] px-3 py-1.5 font-semibold text-[#111827]"
-                      >
-                        Dismiss
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          clearAlerts();
-                          const err = await onScamDecision(sr.id, 'freeze_listing');
-                          if (err) setErrorMsg(err);
-                          else setFeedback('Listing frozen under investigation.');
-                        }}
-                        className="rounded-lg border border-[#F59E0B] bg-[#FFFBEB] px-3 py-1.5 font-semibold text-[#92400E]"
-                      >
-                        Freeze Listing
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          clearAlerts();
-                          const err = await onScamDecision(sr.id, 'ban_blacklist');
-                          if (err) setErrorMsg(err);
-                          else setFeedback('Seller banned and NRC/Phone/MoMo identifiers permanently hashed into Blacklist.');
-                        }}
-                        className="inline-flex items-center gap-1 rounded-lg bg-[#C2410C] px-3 py-1.5 font-semibold text-white"
-                      >
-                        <Ban className="h-3.5 w-3.5" />
-                        Ban &amp; Hash Blacklist
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+
+            {reportedListings.length === 0 ? (
+              <div className="p-6 text-xs text-[#4B5563]">
+                No listings have been reported yet.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[820px] text-left text-xs">
+                  <thead className="border-b border-[#E5E7EB] bg-[#F9FAF8] text-[11px] font-semibold uppercase tracking-wide text-[#4B5563]">
+                    <tr>
+                      <th className="px-4 py-3">Reported Listing</th>
+                      <th className="px-4 py-3">Reported Advertiser</th>
+                      <th className="px-4 py-3">Advertiser Rating</th>
+                      <th className="px-4 py-3">Reports &amp; Reasons</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E5E7EB]">
+                    {reportedListings.map((row) => {
+                      const advStatusStyle = STATUS_BADGE_MAP[row.sellerAccountStatus];
+                      return (
+                        <tr key={row.listingId} className="align-top hover:bg-[#F9FAF8]/60">
+                          <td className="px-4 py-3.5">
+                            <div className="font-bold text-[#111827]">{row.listingTitle}</div>
+                            <div className="mt-0.5 text-[11px] text-[#4B5563]">
+                              {row.listingCategory} ·{' '}
+                              <span className="font-mono font-semibold text-[#1B5E20] tabular-nums">
+                                {formatZMW(row.listingPriceZmw)}
+                              </span>{' '}
+                              · {row.listingDistrict}, {row.listingProvince}
+                            </div>
+                            <div className="mt-1.5 inline-flex items-center rounded border border-[#E5E7EB] bg-[#F9FAF8] px-2 py-0.5 font-mono text-[10px] font-semibold uppercase text-[#111827]">
+                              Listing: {row.listingStatus}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3.5">
+                            <div className="font-bold text-[#111827]">
+                              {row.sellerBusinessName || row.sellerName}
+                            </div>
+                            <div className="mt-0.5 font-mono text-[11px] text-[#4B5563]">
+                              {row.sellerSystemId || row.sellerId} ·{' '}
+                              {VERIFICATION_LABELS[row.sellerVerificationTier]}
+                            </div>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                              <span
+                                className={`inline-flex items-center rounded border px-2 py-0.5 text-[10px] font-semibold ${advStatusStyle.classes}`}
+                              >
+                                {advStatusStyle.label}
+                              </span>
+                              <span className="font-mono text-[11px] text-[#4B5563] tabular-nums">
+                                {row.sellerTotalReportsCount} total report(s)
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3.5">
+                            <div className="flex items-center gap-1.5">
+                              <Star className="h-4 w-4 fill-[#F59E0B] text-[#F59E0B]" />
+                              <span className="font-mono text-sm font-bold text-[#111827] tabular-nums">
+                                {row.sellerRating.reviewCount > 0
+                                  ? `${row.sellerRating.averageRating.toFixed(1)} / 5.0`
+                                  : 'No rating'}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-[#4B5563] tabular-nums">
+                              {row.sellerRating.reviewCount}{' '}
+                              {row.sellerRating.reviewCount === 1 ? 'review' : 'reviews'}
+                            </div>
+                            {row.sellerRating.reviewCount > 0 && (
+                              <div className="mt-1 font-mono text-[11px] text-[#4B5563] tabular-nums">
+                                Quality {row.sellerRating.productQualityAvg.toFixed(1)} · Comm{' '}
+                                {row.sellerRating.communicationAvg.toFixed(1)} · Price{' '}
+                                {row.sellerRating.pricingHonestyAvg.toFixed(1)}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3.5">
+                            <div className="font-mono font-semibold text-[#C2410C] tabular-nums">
+                              {row.openReportsCount} open / {row.totalReportsCount} total
+                            </div>
+                            <div className="mt-1 text-[11px] text-[#374151]">
+                              {row.reasons.join(', ')}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3.5 text-right">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              {row.listing && onInspectListing && (
+                                <button
+                                  type="button"
+                                  onClick={() => onInspectListing(row.listing!)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-[#1B5E20] px-2.5 py-1.5 text-[11px] font-semibold text-[#1B5E20] hover:bg-[#EEF3EC]"
+                                >
+                                  <Eye className="h-3.5 w-3.5" />
+                                  View Reported Listing
+                                </button>
+                              )}
+                              {row.listing && row.listing.status !== 'under_investigation' && (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    clearAlerts();
+                                    const err = await onUpdateListingStatus(
+                                      row.listingId,
+                                      'under_investigation'
+                                    );
+                                    if (err) setErrorMsg(err);
+                                    else
+                                      setFeedback(
+                                        `Listing "${row.listingTitle}" placed under investigation.`
+                                      );
+                                  }}
+                                  className="rounded-lg border border-[#F59E0B] bg-[#FFFBEB] px-2.5 py-1.5 text-[11px] font-semibold text-[#92400E]"
+                                >
+                                  Freeze Listing
+                                </button>
+                              )}
+                              {row.listing && row.listing.status !== 'active' && (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    clearAlerts();
+                                    const err = await onUpdateListingStatus(row.listingId, 'active');
+                                    if (err) setErrorMsg(err);
+                                    else
+                                      setFeedback(
+                                        `Listing "${row.listingTitle}" restored to active.`
+                                      );
+                                  }}
+                                  className="rounded-lg border border-[#E5E7EB] px-2.5 py-1.5 text-[11px] font-semibold text-[#111827] hover:bg-[#F9FAF8]"
+                                >
+                                  Restore Active
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
-          <div className="rounded-xl border border-[#E5E7EB] bg-white lg:col-span-4">
-            <div className="border-b border-[#E5E7EB] bg-[#F9FAF8] px-5 py-3.5 text-sm font-bold text-[#111827]">
-              Permanent Hashed Blacklist ({blacklist.length})
-            </div>
-            <div className="divide-y divide-[#E5E7EB] p-4 text-xs">
-              {blacklist.length === 0 ? (
-                <p className="text-[#4B5563]">
-                  No permanently blacklisted NRC, phone, or Mobile Money wallets yet.
-                </p>
-              ) : (
-                blacklist.map((b) => (
-                  <div key={b.id} className="py-2.5 font-mono">
-                    <div className="font-sans font-bold text-[#C2410C]">{b.reason}</div>
-                    <div className="mt-1 text-[11px] text-[#4B5563]">
-                      Phone SHA: {b.phoneHash}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+            <div className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-white lg:col-span-8">
+              <div className="border-b border-[#E5E7EB] bg-[#F9FAF8] px-5 py-3.5 text-sm font-bold text-[#111827]">
+                Community Scam Reports &amp; Auto-Freeze Moderation
+              </div>
+              <div className="divide-y divide-[#E5E7EB]">
+                {scamReports.map((sr) => {
+                  const targetListing = listings.find((l) => l.id === sr.listingId);
+                  const reportedSeller = usersById[targetListing?.sellerId || sr.sellerId];
+                  const sellerRating = computeSellerAggregateRating(
+                    reviews,
+                    targetListing?.sellerId || sr.sellerId
+                  );
+                  return (
+                    <div key={sr.id} className="space-y-2 p-5 text-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <span className="font-bold text-[#111827]">
+                            {targetListing?.title || sr.listingId}
+                          </span>
+                          <span className="ml-2 text-[11px] text-[#4B5563]">
+                            Advertiser:{' '}
+                            <strong className="text-[#111827]">
+                              {reportedSeller?.businessName || reportedSeller?.name || sr.sellerId}
+                            </strong>
+                            {reportedSeller?.systemId ? ` (${reportedSeller.systemId})` : ''} ·
+                            Rating:{' '}
+                            <span className="font-mono font-semibold text-[#111827] tabular-nums">
+                              {sellerRating.reviewCount > 0
+                                ? `${sellerRating.averageRating.toFixed(1)}★ (${sellerRating.reviewCount})`
+                                : 'No reviews (0)'}
+                            </span>
+                          </span>
+                        </div>
+                        <span className="font-mono font-semibold uppercase text-[#C2410C]">
+                          Report: {sr.status} · Listing: {targetListing?.status || 'removed'}
+                        </span>
+                      </div>
+                      <div className="text-[#4B5563]">
+                        <strong>{sr.reason}:</strong> {sr.details} (Reported by {sr.reporterName})
+                      </div>
+                      {sr.evidenceDataUrl && (
+                        <div>
+                          <a
+                            href={sr.evidenceDataUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 font-semibold text-[#1B5E20] underline"
+                          >
+                            View Attached Report Evidence
+                          </a>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        {targetListing && onInspectListing && (
+                          <button
+                            type="button"
+                            onClick={() => onInspectListing(targetListing)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-[#1B5E20] px-3 py-1.5 font-semibold text-[#1B5E20] hover:bg-[#EEF3EC]"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            View Listing
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            clearAlerts();
+                            const err = await onScamDecision(sr.id, 'dismiss');
+                            if (err) setErrorMsg(err);
+                            else setFeedback('Report dismissed and listing cleared if below threshold.');
+                          }}
+                          className="rounded-lg border border-[#E5E7EB] px-3 py-1.5 font-semibold text-[#111827]"
+                        >
+                          Dismiss
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            clearAlerts();
+                            const err = await onScamDecision(sr.id, 'freeze_listing');
+                            if (err) setErrorMsg(err);
+                            else setFeedback('Listing frozen under investigation.');
+                          }}
+                          className="rounded-lg border border-[#F59E0B] bg-[#FFFBEB] px-3 py-1.5 font-semibold text-[#92400E]"
+                        >
+                          Freeze Listing
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            clearAlerts();
+                            const err = await onScamDecision(sr.id, 'ban_blacklist');
+                            if (err) setErrorMsg(err);
+                            else
+                              setFeedback(
+                                'Seller banned and NRC/Phone/MoMo identifiers permanently hashed into Blacklist.'
+                              );
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg bg-[#C2410C] px-3 py-1.5 font-semibold text-white"
+                        >
+                          <Ban className="h-3.5 w-3.5" />
+                          Ban &amp; Hash Blacklist
+                        </button>
+                      </div>
                     </div>
-                    {b.nrcHash && (
-                      <div className="text-[11px] text-[#4B5563]">NRC SHA: {b.nrcHash}</div>
-                    )}
-                  </div>
-                ))
-              )}
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-[#E5E7EB] bg-white lg:col-span-4">
+              <div className="border-b border-[#E5E7EB] bg-[#F9FAF8] px-5 py-3.5 text-sm font-bold text-[#111827]">
+                Permanent Hashed Blacklist ({blacklist.length})
+              </div>
+              <div className="divide-y divide-[#E5E7EB] p-4 text-xs">
+                {blacklist.length === 0 ? (
+                  <p className="text-[#4B5563]">
+                    No permanently blacklisted NRC, phone, or Mobile Money wallets yet.
+                  </p>
+                ) : (
+                  blacklist.map((b) => (
+                    <div key={b.id} className="py-2.5 font-mono">
+                      <div className="font-sans font-bold text-[#C2410C]">{b.reason}</div>
+                      <div className="mt-1 text-[11px] text-[#4B5563]">
+                        Phone SHA: {b.phoneHash}
+                      </div>
+                      {b.nrcHash && (
+                        <div className="text-[11px] text-[#4B5563]">NRC SHA: {b.nrcHash}</div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>

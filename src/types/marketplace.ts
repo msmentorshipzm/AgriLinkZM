@@ -88,6 +88,7 @@ export interface UserAccount {
 }
 
 export interface ServerUserAccount extends UserAccount {
+  authUserId?: string;
   passwordHash?: string;
   verificationCodeHash?: string;
   verificationExpiresAt?: number;
@@ -199,6 +200,7 @@ export interface KycSubmission {
 
 export interface ChatConversation {
   id: string;
+  kind?: 'listing_inquiry' | 'billing_support';
   listingId?: string;
   listingTitle?: string;
   sellerId: string;
@@ -216,10 +218,13 @@ export interface ChatMessage {
   senderId: string;
   senderName: string;
   senderRole: UserRole;
-  type: 'text' | 'image' | 'voice' | 'system_handoff';
+  type: 'text' | 'image' | 'voice' | 'system_handoff' | 'payment_notice';
   text?: string;
   mediaDataUrl?: string;
   audioDurationSec?: number;
+  noticeKey?: string;
+  paymentType?: 'advertiser_subscription' | 'buyer_account_fee';
+  amountZmw?: number;
   createdAt: number;
 }
 

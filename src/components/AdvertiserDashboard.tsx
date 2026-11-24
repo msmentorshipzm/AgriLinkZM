@@ -26,11 +26,13 @@ import type {
   KycSubmission,
   Listing,
   LocationPrivacyMode,
+  PaymentRecord,
   PlatformConfig,
   ProductCategory,
   Review,
   UserAccount,
 } from '../types/marketplace.ts';
+import { evaluateUserPendingPayment } from '../utils/billingNotifications.ts';
 import { computeTrialStatus, formatZMW } from '../utils/marketplaceRules.ts';
 
 interface AdvertiserDashboardProps {
@@ -38,6 +40,7 @@ interface AdvertiserDashboardProps {
   config: PlatformConfig;
   listings: Listing[];
   reviews: Review[];
+  payments?: PaymentRecord[];
   kycSubmissions: KycSubmission[];
   conversations: ChatConversation[];
   recentEvents: AnalyticsStreamEvent[];
@@ -96,6 +99,7 @@ export const AdvertiserDashboard: React.FC<AdvertiserDashboardProps> = ({
   config,
   listings,
   reviews,
+  payments = [],
   kycSubmissions,
   conversations,
   recentEvents,
@@ -145,10 +149,13 @@ export const AdvertiserDashboard: React.FC<AdvertiserDashboardProps> = ({
   const [replyStatus, setReplyStatus] = useState<string | null>(null);
 
   const trialEval = computeTrialStatus(currentUser, config);
+  const pendingPayment = evaluateUserPendingPayment(currentUser, config, payments);
   const myListings = listings.filter((l) => l.sellerId === currentUser.id);
   const myReviews = reviews.filter((r) => r.sellerId === currentUser.id);
   const myKyc = kycSubmissions.filter((k) => k.userId === currentUser.id);
-  const myConversations = conversations.filter((c) => c.sellerId === currentUser.id);
+  const myConversations = conversations.filter(
+    (c) => c.sellerId === currentUser.id || c.buyerId === currentUser.id
+  );
   const sellerEvents = recentEvents.filter((e) => !e.sellerId || e.sellerId === currentUser.id);
 
   const totalImpressions = myListings.reduce((acc, l) => acc + l.impressions, 0);
@@ -321,44 +328,31 @@ export const AdvertiserDashboard: React.FC<AdvertiserDashboardProps> = ({
         </div>
       </div>
 
-      {/* Trial & Billing Status Banner (Only visible once Super Admin activates advertiser payments) */}
-      {config.advertiserPaymentRequired &&
-        (trialEval.reminderStage !== 'none' || trialEval.effectiveAccountStatus === 'payment_required') && (
-          <div
-            className={`mt-6 flex flex-col items-start justify-between gap-4 rounded-xl border p-4 sm:flex-row sm:items-center ${
-              trialEval.effectiveAccountStatus === 'payment_required'
-                ? 'border-[#C2410C]/40 bg-[#FFF7ED] text-[#9A3412]'
-                : 'border-[#F59E0B]/50 bg-[#FFFBEB] text-[#78350F]'
-            }`}
-          >
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-              <div className="text-sm">
-                {trialEval.effectiveAccountStatus === 'payment_required' ? (
-                  <>
-                    <strong>Free Trial Expired — Listings Auto-Paused:</strong> Complete your ZMW{' '}
-                    {config.advertiserMonthlyFeeZmw.toFixed(2)} monthly payment via MTN MoMo or Airtel Money to reactivate your adverts immediately.
-                  </>
-                ) : (
-                  <>
-                    <strong>
-                      Trial Expiry Notice ({trialEval.daysRemaining}{' '}
-                      {trialEval.daysRemaining === 1 ? 'day' : 'days'} remaining):
-                    </strong>{' '}
-                    Renew before expiry via Mobile Money to prevent automatic listing pause.
-                  </>
-                )}
-              </div>
+      {/* Trial & Billing Status Banner (Visible for ALL unpaid advertisers once Super Admin activates advertiser payments) */}
+      {pendingPayment && (
+        <div
+          className={`mt-6 flex flex-col items-start justify-between gap-4 rounded-xl border p-4 sm:flex-row sm:items-center ${
+            pendingPayment.isOverdue
+              ? 'border-[#C2410C]/40 bg-[#FFF7ED] text-[#9A3412]'
+              : 'border-[#F59E0B]/50 bg-[#FFFBEB] text-[#78350F]'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div className="text-sm">
+              <strong>{pendingPayment.bannerTitle}:</strong>{' '}
+              {pendingPayment.bannerDescription}
             </div>
-            <button
-              type="button"
-              onClick={onOpenPayment}
-              className="shrink-0 rounded-lg bg-[#1B5E20] px-4 py-2 text-xs font-semibold text-white hover:bg-[#154A19]"
-            >
-              Pay via Mobile Money
-            </button>
           </div>
-        )}
+          <button
+            type="button"
+            onClick={onOpenPayment}
+            className="shrink-0 rounded-lg bg-[#1B5E20] px-4 py-2 text-xs font-semibold text-white hover:bg-[#154A19] whitespace-nowrap"
+          >
+            {pendingPayment.buttonLabel}
+          </button>
+        </div>
+      )}
 
       {config.advertiserPaymentRequired && trialEval.effectiveAccountStatus === 'active_paid' && (
         <div className="mt-6 flex items-center justify-between rounded-xl border border-[#1B5E20]/25 bg-[#EEF3EC] px-4 py-3 text-xs font-medium text-[#1B5E20]">

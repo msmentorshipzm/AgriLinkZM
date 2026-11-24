@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  CreditCard,
   ImagePlus,
   MessageSquare,
   Mic,
@@ -8,6 +9,8 @@ import {
   X,
 } from 'lucide-react';
 import type { ChatConversation, ChatMessage, UserAccount } from '../types/marketplace.ts';
+import type { PendingPaymentStatus } from '../utils/billingNotifications.ts';
+import { formatZMW } from '../utils/marketplaceRules.ts';
 
 interface MessagingDrawerProps {
   isOpen: boolean;
@@ -15,6 +18,7 @@ interface MessagingDrawerProps {
   conversations: ChatConversation[];
   messages: ChatMessage[];
   activeConversationId: string | null;
+  pendingPaymentStatus?: PendingPaymentStatus | null;
   onSelectConversation: (convId: string) => void;
   onClose: () => void;
   onSendMessage: (payload: {
@@ -30,6 +34,7 @@ interface MessagingDrawerProps {
     requiresBuyerFee?: boolean;
   }>;
   onOpenBuyerFeeCheckout: () => void;
+  onOpenPaymentCheckout?: (paymentType: 'advertiser_subscription' | 'buyer_account_fee') => void;
 }
 
 async function compressImageFile(file: File): Promise<string> {
@@ -70,11 +75,13 @@ export const MessagingDrawer: React.FC<MessagingDrawerProps> = ({
   conversations,
   messages,
   activeConversationId,
+  pendingPaymentStatus,
   onSelectConversation,
   onClose,
   onSendMessage,
   onWhatsAppHandoff,
   onOpenBuyerFeeCheckout,
+  onOpenPaymentCheckout,
 }) => {
   const [textInput, setTextInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -235,6 +242,8 @@ export const MessagingDrawer: React.FC<MessagingDrawerProps> = ({
     }
   };
 
+  const isBillingSupportThread = selectedConv?.kind === 'billing_support';
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-6"
@@ -247,10 +256,10 @@ export const MessagingDrawer: React.FC<MessagingDrawerProps> = ({
         <div className="flex items-center justify-between border-b border-[#E5E7EB] bg-[#F9FAF8] px-5 py-3.5">
           <div>
             <h2 id="messaging-drawer-title" className="font-display text-lg font-bold text-[#111827]">
-              In-App Buyer &amp; Seller Messages
+              In-App Messages &amp; Billing Notices
             </h2>
             <p className="text-xs text-[#4B5563]">
-              Communicate safely with text, compressed produce photos, and voice notes before sharing phone numbers.
+              Communicate safely with text, compressed produce photos, voice notes, and billing updates.
             </p>
           </div>
           <button
@@ -338,12 +347,23 @@ export const MessagingDrawer: React.FC<MessagingDrawerProps> = ({
                     </div>
                     {selectedConv.listingTitle && (
                       <div className="truncate text-xs text-[#4B5563]">
-                        Inquiry: {selectedConv.listingTitle}
+                        {isBillingSupportThread ? selectedConv.listingTitle : `Inquiry: ${selectedConv.listingTitle}`}
                       </div>
                     )}
                   </div>
 
-                  {selectedConv.buyerId === currentUser.id && (
+                  {isBillingSupportThread && pendingPaymentStatus && onOpenPaymentCheckout && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenPaymentCheckout(pendingPaymentStatus.paymentType)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#1B5E20] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#154A19] whitespace-nowrap shrink-0"
+                    >
+                      <CreditCard className="h-3.5 w-3.5" />
+                      Pay Now ({formatZMW(pendingPaymentStatus.amountZmw)})
+                    </button>
+                  )}
+
+                  {!isBillingSupportThread && selectedConv.buyerId === currentUser.id && (
                     <button
                       type="button"
                       onClick={handleWhatsAppContinue}
@@ -383,6 +403,48 @@ export const MessagingDrawer: React.FC<MessagingDrawerProps> = ({
                             className="mx-auto max-w-md rounded-lg border border-[#E5E7EB] bg-white px-3.5 py-2 text-center text-xs text-[#4B5563]"
                           >
                             {msg.text}
+                          </div>
+                        );
+                      }
+
+                      if (msg.type === 'payment_notice') {
+                        const showPayButton =
+                          Boolean(msg.paymentType) &&
+                          Boolean(pendingPaymentStatus) &&
+                          currentUser.id === selectedConv.buyerId &&
+                          Boolean(onOpenPaymentCheckout);
+
+                        return (
+                          <div
+                            key={msg.id}
+                            className="rounded-xl border border-[#F59E0B]/50 bg-[#FFFBEB] p-4 text-xs text-[#78350F]"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-bold text-[#92400E]">
+                                {msg.senderName} · Automated Billing Notice
+                              </span>
+                              <span className="font-mono text-[10px] text-[#92400E] tabular-nums">
+                                {new Date(msg.createdAt).toLocaleString()}
+                              </span>
+                            </div>
+                            <p className="mt-1.5 text-sm leading-relaxed text-[#78350F]">
+                              {msg.text}
+                            </p>
+                            {showPayButton && msg.paymentType && onOpenPaymentCheckout && (
+                              <div className="mt-3">
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenPaymentCheckout(msg.paymentType!)}
+                                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#1B5E20] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#154A19]"
+                                >
+                                  <CreditCard className="h-3.5 w-3.5" />
+                                  Pay Now via Mobile Money
+                                  {typeof msg.amountZmw === 'number'
+                                    ? ` (${formatZMW(msg.amountZmw)})`
+                                    : ''}
+                                </button>
+                              </div>
+                            )}
                           </div>
                         );
                       }

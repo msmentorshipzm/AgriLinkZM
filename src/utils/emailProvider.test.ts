@@ -24,7 +24,7 @@ test('resolveBrevoSender falls back to AgriLink ZM defaults and honors overrides
 
   assert.deepEqual(
     resolveBrevoSender({
-      BREVO_SENDER_EMAIL: 'noreply@agrilink.zm',
+      BREVO_SENDER_EMAIL: 'agrilink0@gmail.com',
       BREVO_SENDER_NAME: 'AgriLink Zambia',
     }),
     {

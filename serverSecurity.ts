@@ -107,6 +107,7 @@ export function verifySessionToken(token?: string | null): string | null {
 
 export function sanitizeUserForClient(user: ServerUserAccount): UserAccount {
   const {
+    authUserId: _au,
     passwordHash: _ph,
     verificationCodeHash: _vh,
     verificationExpiresAt: _ve,

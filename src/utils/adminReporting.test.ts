@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import {
   assignSystemId,
   buildCsvExport,
+  buildReportedListingsOverview,
   computePortalMetricsReport,
   normalizeSystemIdInput,
 } from './adminReporting.ts';
 import type {
   Listing,
   PaymentRecord,
+  Review,
+  ScamReport,
   UserAccount,
 } from '../types/marketplace.ts';
 
@@ -149,4 +152,124 @@ test('computePortalMetricsReport aggregates money collected, network totals, use
 test('buildCsvExport escapes commas and quotes properly', () => {
   const csv = buildCsvExport(['ID', 'Name'], [['AZM-ADV-0001', 'Mwansa, "Chongwe" Farms']]);
   assert.equal(csv, 'ID,Name\nAZM-ADV-0001,"Mwansa, ""Chongwe"" Farms"');
+});
+
+test('buildReportedListingsOverview aggregates reported listings and reported advertiser ratings', () => {
+  const users: UserAccount[] = [
+    {
+      id: 'u1',
+      systemId: 'AZM-ADV-0005',
+      name: 'Thandiwe Zulu',
+      businessName: 'Chipata Cooperative Growers',
+      email: 'thandiwe@zm.zm',
+      phone: '+260967419022',
+      role: 'advertiser',
+      staffPermissions: [],
+      province: 'Eastern',
+      district: 'Chipata',
+      verificationTier: 'tier1_id',
+      accountStatus: 'trial_active',
+      trialStartAt: 1000,
+      trialDaysAllocated: 30,
+      lastActiveAt: 2000,
+      createdAt: 1000,
+      savedListingIds: [],
+    },
+  ];
+  const listings: Listing[] = [
+    {
+      id: 'lst-7',
+      sellerId: 'u1',
+      title: 'Organic Groundnuts',
+      category: 'Crops & Grains',
+      description: 'Shelled',
+      priceZmw: 1180,
+      unitLabel: 'per 50kg bag',
+      quantityAvailable: '120 bags',
+      province: 'Eastern',
+      district: 'Chipata',
+      locationPrivacy: 'district_general',
+      images: ['/a.jpg'],
+      hasVideoWalkthrough: false,
+      status: 'active',
+      impressions: 300,
+      views: 80,
+      uniqueVisitors: 60,
+      videoPlays: 0,
+      contactReveals: 10,
+      createdAt: 1000,
+      updatedAt: 1000,
+    },
+  ];
+  const reviews: Review[] = [
+    {
+      id: 'rev-a',
+      sellerId: 'u1',
+      buyerId: 'b1',
+      buyerName: 'Buyer One',
+      listingId: 'lst-7',
+      productQuality: 2,
+      communication: 3,
+      pricingHonesty: 1,
+      overallRating: 2.0,
+      comment: 'Price changed after call.',
+      createdAt: 3000,
+      updatedAt: 3000,
+    },
+    {
+      id: 'rev-b',
+      sellerId: 'u1',
+      buyerId: 'b2',
+      buyerName: 'Buyer Two',
+      listingId: 'lst-7',
+      productQuality: 4,
+      communication: 4,
+      pricingHonesty: 4,
+      overallRating: 4.0,
+      comment: 'Bag weight was ok.',
+      createdAt: 4000,
+      updatedAt: 4000,
+    },
+  ];
+  const scamReports: ScamReport[] = [
+    {
+      id: 'sr-1',
+      listingId: 'lst-7',
+      sellerId: 'u1',
+      reporterBuyerId: 'b1',
+      reporterName: 'Buyer One',
+      reason: 'Misleading location or price',
+      details: 'Extra fee asked.',
+      status: 'open',
+      createdAt: 5000,
+    },
+    {
+      id: 'sr-2',
+      listingId: 'lst-7',
+      sellerId: 'u1',
+      reporterBuyerId: 'b2',
+      reporterName: 'Buyer Two',
+      reason: 'Fake or stolen photos',
+      details: 'Wrong crop photo.',
+      status: 'resolved_frozen',
+      createdAt: 6000,
+    },
+  ];
+
+  const overview = buildReportedListingsOverview({
+    scamReports,
+    listings,
+    users,
+    reviews,
+  });
+
+  assert.equal(overview.length, 1);
+  assert.equal(overview[0].listingTitle, 'Organic Groundnuts');
+  assert.equal(overview[0].sellerName, 'Thandiwe Zulu');
+  assert.equal(overview[0].sellerSystemId, 'AZM-ADV-0005');
+  assert.equal(overview[0].totalReportsCount, 2);
+  assert.equal(overview[0].openReportsCount, 1);
+  assert.equal(overview[0].sellerRating.averageRating, 3.0);
+  assert.equal(overview[0].sellerRating.reviewCount, 2);
+  assert.equal(overview[0].sellerRating.pricingHonestyAvg, 2.5);
 });
