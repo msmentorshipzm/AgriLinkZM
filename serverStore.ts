@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type {
   AnalyticsStreamEvent,
@@ -16,7 +17,9 @@ import {
   loadMarketplaceStateFromSupabase,
 } from './serverSupabase.js';
 
-const DATA_DIR = path.resolve(process.cwd(), '.data');
+const DATA_DIR = process.env.VERCEL
+  ? path.join(os.tmpdir(), '.data')
+  : path.resolve(process.cwd(), '.data');
 const DB_FILE = path.join(DATA_DIR, 'agrilink-db.json');
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -702,11 +705,19 @@ function buildSeedState(): MarketplaceState {
 }
 
 export function loadState(): MarketplaceState {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(DB_FILE)) {
-    const seed = buildSeedState();
-    fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf8');
-    return seed;
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(DB_FILE)) {
+      const seed = buildSeedState();
+      try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf8');
+      } catch {
+        // Ignore read-only filesystem errors
+      }
+      return seed;
+    }
+  } catch {
+    return buildSeedState();
   }
   try {
     const raw = fs.readFileSync(DB_FILE, 'utf8');

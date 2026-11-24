@@ -58,7 +58,12 @@ function getSupabaseUrl(): string {
 }
 
 function getSupabaseServiceKey(): string {
-  return process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '';
+  return (
+    process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
+    process.env.SUPABASE_ANON_KEY?.trim() ||
+    process.env.VITE_SUPABASE_ANON_KEY?.trim() ||
+    ''
+  );
 }
 
 export function isSupabaseServerConfigured(): boolean {

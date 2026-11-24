@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import http from 'node:http';
 import express from 'express';
 import path from 'node:path';
@@ -42,6 +43,7 @@ import type {
   EmailNotificationRecord,
   KycSubmission,
   Listing,
+  MarketplaceState,
   PaymentRecord,
   Review,
   ScamReport,
@@ -65,6 +67,22 @@ const PORT = Number(process.env.PORT || 3000);
 const isProduction = process.env.NODE_ENV === 'production';
 
 let state = loadState();
+let initStorePromise: Promise<MarketplaceState> | null = null;
+
+async function ensureStateHydrated(): Promise<MarketplaceState> {
+  if (!initStorePromise) {
+    initStorePromise = initDatabaseStore().catch((err) => {
+      console.warn('Supabase store hydration warning, using local state:', err);
+      return state;
+    });
+  }
+  const hydrated = await initStorePromise;
+  if (hydrated) {
+    state = hydrated;
+  }
+  return state;
+}
+
 const sseClients = new Set<Response>();
 const chatSockets = new Map<string, Set<WebSocket>>();
 
@@ -294,6 +312,15 @@ function syncAllAccountStatuses(): void {
 
   const app = express();
   app.use(express.json({ limit: '8mb' }));
+
+  app.use(async (_req, _res, next) => {
+    try {
+      await ensureStateHydrated();
+    } catch {
+      // Continue with current state
+    }
+    next();
+  });
 
   app.get('/api/health', (_req, res) => {
     res.json({
@@ -2394,29 +2421,27 @@ function syncAllAccountStatuses(): void {
   });
 
   if (!isProduction && !process.env.VERCEL) {
-    app.get('/@vite/client', (_req, res) => {
-      res.setHeader('Content-Type', 'application/javascript');
-      res.send(`
-        console.info('[Vite HMR Shim] Connected');
-        window.__vite_plugin_react_preamble_installed__ = true;
-        export function createHotContext(ownerPath) {
-          return {
-            accept: (cb) => {},
-            dispose: (cb) => {},
-            invalidate: () => window.location.reload(),
-            on: (event, cb) => {},
-            off: (event, cb) => {},
-            send: (event, data) => {}
-          };
-        }
-        export function updateStyle() {}
-        export function injectQuery() {}
-        export default {
-          createHotContext,
-          updateStyle,
-          injectQuery
-        };
-      `);
+    app.get('/@vite/client', async (_req, res) => {
+      try {
+        const clientPath = path.resolve(process.cwd(), 'node_modules/vite/dist/client/client.mjs');
+        let code = await fs.promises.readFile(clientPath, 'utf8');
+        code = code.replace(
+          'reject(/* @__PURE__ */ new Error("WebSocket closed without opened."));',
+          'resolve();'
+        );
+        res.setHeader('Content-Type', 'application/javascript');
+        res.send(code);
+      } catch {
+        res.setHeader('Content-Type', 'application/javascript');
+        res.send(`
+          export class ErrorOverlay extends HTMLElement {}
+          export function createHotContext() { return { accept() {}, dispose() {}, invalidate() {}, on() {}, off() {}, send() {} }; }
+          export function updateStyle() {}
+          export function removeStyle() {}
+          export function injectQuery(u) { return u; }
+          export default { ErrorOverlay, createHotContext, updateStyle, removeStyle, injectQuery };
+        `);
+      }
     });
   }
 
@@ -2437,8 +2462,7 @@ function syncAllAccountStatuses(): void {
   }
 
   if (!process.env.VERCEL) {
-    initDatabaseStore().then((loadedState) => {
-      state = loadedState;
+    ensureStateHydrated().then(() => {
       httpServer.listen(PORT, '0.0.0.0', () => {
         console.log(`AgriLink ZM server running at http://localhost:${PORT}`);
       });
