@@ -362,19 +362,13 @@ function syncAllAccountStatuses(): void {
 
   // SSE Real-time Analytics & Alert Stream
   app.get('/api/analytics/stream', (req, res) => {
-    if (process.env.VERCEL) {
-      res.json({ ok: true, onlineCount: 1, recentEvents: state.recentEvents.slice(0, 10) });
-      return;
-    }
     res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders?.();
+    res.write(`: connected\n\n`);
 
     sseClients.add(res);
-    res.write(
-      `event: connected\ndata: ${JSON.stringify({ onlineCount: sseClients.size, timestamp: Date.now() })}\n\n`
-    );
 
     const heartbeat = setInterval(() => {
       res.write(`: heartbeat\n\n`);
@@ -384,6 +378,16 @@ function syncAllAccountStatuses(): void {
       clearInterval(heartbeat);
       sseClients.delete(res);
     });
+  });
+
+  // Auth: Get current session user
+  app.get('/api/auth/me', (req, res) => {
+    const actor = getActor(req);
+    if (!actor) {
+      res.status(401).json({ error: 'Not authenticated' });
+      return;
+    }
+    res.json({ user: sanitizeUserForClient(actor) });
   });
 
   // Full state bootstrap for client (strictly stripping password hashes & respecting permissions)
@@ -767,7 +771,7 @@ function syncAllAccountStatuses(): void {
       email: cleanEmail,
       username: chosenUsername,
       deliveryMode,
-      previewVerificationCode: deliveryMode === 'in_app_dispatch' ? verificationCode : undefined,
+      previewVerificationCode: (isProduction || process.env.VERCEL) ? undefined : (deliveryMode === 'in_app_dispatch' ? verificationCode : undefined),
       message: `Account created! Enter the verification code sent to ${cleanEmail} before logging in.`,
     });
   });
@@ -856,7 +860,7 @@ function syncAllAccountStatuses(): void {
       sent: true,
       email: user.email,
       deliveryMode,
-      previewVerificationCode: deliveryMode === 'in_app_dispatch' ? code : undefined,
+      previewVerificationCode: (isProduction || process.env.VERCEL) ? undefined : (deliveryMode === 'in_app_dispatch' ? code : undefined),
       message: `A new verification code has been issued for ${user.email}.`,
     });
   });

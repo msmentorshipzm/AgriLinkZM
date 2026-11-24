@@ -57,8 +57,20 @@ export default function App() {
   const [state, setState] = useState<ClientMarketplaceState | null>(null);
   const [onlineCount, setOnlineCount] = useState(1);
   // Session token & signed-in user are kept strictly in React memory so passwords are required on every sign-in.
-  const [authToken, setAuthToken] = useState<string | null>(null);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('agrilink_auth_token');
+    } catch {
+      return null;
+    }
+  });
+  const [currentUserId, setCurrentUserId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('agrilink_user_id');
+    } catch {
+      return null;
+    }
+  });
   const [activeView, setActiveView] = useState<AppView>('marketplace');
   const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState(false);
 
@@ -107,8 +119,37 @@ export default function App() {
   fetchBootstrapRef.current = fetchBootstrap;
 
   useEffect(() => {
-    void fetchBootstrap();
-  }, [fetchBootstrap]);
+    const savedToken = authToken;
+    if (!savedToken) {
+      void fetchBootstrap(null);
+      return;
+    }
+    fetch('/api/auth/me', {
+      headers: { Authorization: `Bearer ${savedToken}` },
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          const json = (await res.json()) as { user: UserAccount };
+          if (json.user) {
+            setCurrentUserId(json.user.id);
+            await fetchBootstrap(savedToken);
+            return;
+          }
+        }
+        try {
+          localStorage.removeItem('agrilink_auth_token');
+          localStorage.removeItem('agrilink_user_id');
+        } catch {
+          // ignore
+        }
+        setAuthToken(null);
+        setCurrentUserId(null);
+        await fetchBootstrap(null);
+      })
+      .catch(() => {
+        void fetchBootstrap(savedToken);
+      });
+  }, [authToken, fetchBootstrap]);
 
   // Google Maps Platform Case A Quota Listener
   useEffect(() => {
@@ -120,6 +161,9 @@ export default function App() {
   // Real-time SSE Analytics Stream
   useEffect(() => {
     const es = new EventSource('/api/analytics/stream');
+    es.onerror = () => {
+      // Silent error handler to prevent cold-start stream drops from breaking UI
+    };
     es.addEventListener('connected', (e) => {
       try {
         const parsed = JSON.parse((e as MessageEvent).data) as { onlineCount?: number };
@@ -301,6 +345,12 @@ export default function App() {
   const applyAuthenticatedSession = async (user: UserAccount, token: string) => {
     setAuthToken(token);
     setCurrentUserId(user.id);
+    try {
+      localStorage.setItem('agrilink_auth_token', token);
+      localStorage.setItem('agrilink_user_id', user.id);
+    } catch {
+      // ignore
+    }
     setAuthModalOpen(false);
     await fetchBootstrap(token);
     if (user.role === 'super_admin' || user.role === 'staff') {
@@ -420,6 +470,12 @@ export default function App() {
   const handleLogout = () => {
     setAuthToken(null);
     setCurrentUserId(null);
+    try {
+      localStorage.removeItem('agrilink_auth_token');
+      localStorage.removeItem('agrilink_user_id');
+    } catch {
+      // ignore
+    }
     setMessagesOpen(false);
     setActiveView('marketplace');
     void fetchBootstrap(null);
