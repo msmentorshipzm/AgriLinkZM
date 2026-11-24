@@ -2225,6 +2225,7 @@ function syncAllAccountStatuses(): void {
     if (staffAuthUid) staff.authUserId = staffAuthUid;
     state.users.push(staff);
 
+    const appUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://agri-link-zm.vercel.app';
     const emailBodyFull = [
       `Hello ${staff.name},`,
       '',
@@ -2232,11 +2233,13 @@ function syncAllAccountStatuses(): void {
       `Automatically Granted Access: ${resolved.permissions.join(', ')}`,
       '',
       'Your Login Credentials:',
+      `  Website Portal: ${appUrl}`,
       `  Username: ${finalUsername}`,
       `  Email: ${cleanEmail}`,
       `  Temporary Password: ${tempPassword}`,
       '',
       'Please sign in immediately and change your temporary password from your Staff Desk.',
+      `Access the platform here: ${appUrl}`,
       'AgriLink ZM Operations (agrilinkzm0@gmail.com | +260 976 405 828)',
     ].join('\n');
 
