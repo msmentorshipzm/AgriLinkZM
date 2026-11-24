@@ -372,58 +372,81 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
                       : 'Sign in as a Buyer and reveal this seller’s contact details to unlock verified 1-to-5 star ratings.'}
                   </p>
                 ) : (
-                  <form onSubmit={handleReviewSubmit} className="mt-3 space-y-3">
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <form onSubmit={handleReviewSubmit} className="mt-3 space-y-4">
+                    <div className="space-y-3 rounded-lg border border-[#E5E7EB] bg-white p-3.5">
+                      {/* Product Quality Star Selector */}
                       <div>
-                        <label htmlFor="rate-quality" className="block text-xs font-medium text-[#4B5563]">
-                          Product Quality (1–5)
-                        </label>
-                        <select
-                          id="rate-quality"
-                          value={productQuality}
-                          onChange={(e) => setProductQuality(Number(e.target.value))}
-                          className="mt-1 w-full rounded-lg border border-[#E5E7EB] bg-white px-2.5 py-1.5 text-sm"
-                        >
-                          {[5, 4, 3, 2, 1].map((n) => (
-                            <option key={n} value={n}>
-                              {n} Stars
-                            </option>
+                        <div className="flex items-center justify-between text-xs font-medium text-[#374151]">
+                          <span>Product Quality (Produce freshness &amp; sizing)</span>
+                          <span className="font-bold text-[#1B5E20]">{productQuality} / 5 Stars</span>
+                        </div>
+                        <div className="mt-1.5 flex items-center gap-1.5">
+                          {[1, 2, 3, 4, 5].map((n) => (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => setProductQuality(n)}
+                              className={`p-1.5 rounded-md transition-colors ${
+                                n <= productQuality
+                                  ? 'bg-[#FEF3C7] text-[#F59E0B]'
+                                  : 'bg-[#F9FAF8] text-[#D1D5DB] hover:bg-[#EEF3EC]'
+                              }`}
+                              title={`${n} Stars`}
+                            >
+                              <Star className={`h-5 w-5 ${n <= productQuality ? 'fill-[#F59E0B]' : ''}`} />
+                            </button>
                           ))}
-                        </select>
+                        </div>
                       </div>
+
+                      {/* Communication Star Selector */}
                       <div>
-                        <label htmlFor="rate-comm" className="block text-xs font-medium text-[#4B5563]">
-                          Communication (1–5)
-                        </label>
-                        <select
-                          id="rate-comm"
-                          value={communication}
-                          onChange={(e) => setCommunication(Number(e.target.value))}
-                          className="mt-1 w-full rounded-lg border border-[#E5E7EB] bg-white px-2.5 py-1.5 text-sm"
-                        >
-                          {[5, 4, 3, 2, 1].map((n) => (
-                            <option key={n} value={n}>
-                              {n} Stars
-                            </option>
+                        <div className="flex items-center justify-between text-xs font-medium text-[#374151]">
+                          <span>Communication &amp; Responsiveness</span>
+                          <span className="font-bold text-[#1B5E20]">{communication} / 5 Stars</span>
+                        </div>
+                        <div className="mt-1.5 flex items-center gap-1.5">
+                          {[1, 2, 3, 4, 5].map((n) => (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => setCommunication(n)}
+                              className={`p-1.5 rounded-md transition-colors ${
+                                n <= communication
+                                  ? 'bg-[#FEF3C7] text-[#F59E0B]'
+                                  : 'bg-[#F9FAF8] text-[#D1D5DB] hover:bg-[#EEF3EC]'
+                              }`}
+                              title={`${n} Stars`}
+                            >
+                              <Star className={`h-5 w-5 ${n <= communication ? 'fill-[#F59E0B]' : ''}`} />
+                            </button>
                           ))}
-                        </select>
+                        </div>
                       </div>
+
+                      {/* Pricing Honesty Star Selector */}
                       <div>
-                        <label htmlFor="rate-price" className="block text-xs font-medium text-[#4B5563]">
-                          Pricing Honesty (1–5)
-                        </label>
-                        <select
-                          id="rate-price"
-                          value={pricingHonesty}
-                          onChange={(e) => setPricingHonesty(Number(e.target.value))}
-                          className="mt-1 w-full rounded-lg border border-[#E5E7EB] bg-white px-2.5 py-1.5 text-sm"
-                        >
-                          {[5, 4, 3, 2, 1].map((n) => (
-                            <option key={n} value={n}>
-                              {n} Stars
-                            </option>
+                        <div className="flex items-center justify-between text-xs font-medium text-[#374151]">
+                          <span>Pricing Honesty &amp; Transparency</span>
+                          <span className="font-bold text-[#1B5E20]">{pricingHonesty} / 5 Stars</span>
+                        </div>
+                        <div className="mt-1.5 flex items-center gap-1.5">
+                          {[1, 2, 3, 4, 5].map((n) => (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => setPricingHonesty(n)}
+                              className={`p-1.5 rounded-md transition-colors ${
+                                n <= pricingHonesty
+                                  ? 'bg-[#FEF3C7] text-[#F59E0B]'
+                                  : 'bg-[#F9FAF8] text-[#D1D5DB] hover:bg-[#EEF3EC]'
+                              }`}
+                              title={`${n} Stars`}
+                            >
+                              <Star className={`h-5 w-5 ${n <= pricingHonesty ? 'fill-[#F59E0B]' : ''}`} />
+                            </button>
                           ))}
-                        </select>
+                        </div>
                       </div>
                     </div>
                     <div>
