@@ -292,8 +292,6 @@ function syncAllAccountStatuses(): void {
   if (changed) saveState(state);
 }
 
-async function startServer() {
-  state = await initDatabaseStore();
   const app = express();
   app.use(express.json({ limit: '8mb' }));
 
@@ -305,36 +303,42 @@ async function startServer() {
   });
 
   const httpServer = http.createServer(app);
-  const wss = new WebSocketServer({ noServer: true });
+  if (!process.env.VERCEL) {
+    const wss = new WebSocketServer({ noServer: true });
 
-  httpServer.on('upgrade', (request, socket, head) => {
-    const reqUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
-    if (reqUrl.pathname === '/ws/chat') {
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit('connection', ws, request);
-      });
-    }
-    // Leave other upgrade paths (if any) untouched
-  });
-
-  wss.on('connection', (ws, request) => {
-    const reqUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
-    const token = reqUrl.searchParams.get('token') || '';
-    const userId = verifySessionToken(token);
-    if (!userId) {
-      ws.close();
-      return;
-    }
-    addChatSocket(userId, ws);
-    ws.send(JSON.stringify({ type: 'chat:connected', userId, timestamp: Date.now() }));
-
-    ws.on('close', () => {
-      removeChatSocket(userId, ws);
+    httpServer.on('upgrade', (request, socket, head) => {
+      const reqUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+      if (reqUrl.pathname === '/ws/chat') {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          wss.emit('connection', ws, request);
+        });
+      }
+      // Leave other upgrade paths (if any) untouched
     });
-  });
+
+    wss.on('connection', (ws, request) => {
+      const reqUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+      const token = reqUrl.searchParams.get('token') || '';
+      const userId = verifySessionToken(token);
+      if (!userId) {
+        ws.close();
+        return;
+      }
+      addChatSocket(userId, ws);
+      ws.send(JSON.stringify({ type: 'chat:connected', userId, timestamp: Date.now() }));
+
+      ws.on('close', () => {
+        removeChatSocket(userId, ws);
+      });
+    });
+  }
 
   // SSE Real-time Analytics & Alert Stream
   app.get('/api/analytics/stream', (req, res) => {
+    if (process.env.VERCEL) {
+      res.json({ ok: true, onlineCount: 1, recentEvents: state.recentEvents.slice(0, 10) });
+      return;
+    }
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -2389,24 +2393,29 @@ async function startServer() {
     res.json({ ok: true, remainingUsers: state.users.length, remainingListings: state.listings.length });
   });
 
-  if (isProduction) {
+  if (isProduction || process.env.VERCEL) {
     const distDir = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distDir));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distDir, 'index.html'));
     });
   } else {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
+    import('vite').then(async ({ createServer: createViteServer }) => {
+      const vite = await createViteServer({
+        server: { middlewareMode: true, hmr: false },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    }).catch(() => {});
   }
 
-  httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`AgriLink ZM server running at http://localhost:${PORT}`);
-  });
-}
+  if (!process.env.VERCEL) {
+    initDatabaseStore().then((loadedState) => {
+      state = loadedState;
+      httpServer.listen(PORT, '0.0.0.0', () => {
+        console.log(`AgriLink ZM server running at http://localhost:${PORT}`);
+      });
+    });
+  }
 
-startServer();
+export default app;
