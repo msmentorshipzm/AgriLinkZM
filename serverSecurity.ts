@@ -244,12 +244,12 @@ export async function runGeminiMarketplaceChat(params: {
       headers: {
         'User-Agent': 'aistudio-build',
       },
-      timeout: 15000,
+      timeout: 30000,
     },
   });
 
-  const primaryModel = params.speedTier === 'fast' ? 'gemini-3.1-flash-lite' : 'gemini-4-hydrogen';
-  const fallbackModel = primaryModel === 'gemini-3.1-flash-lite' ? 'gemini-4-hydrogen' : 'gemini-3.1-flash-lite';
+  const primaryModel = params.speedTier === 'fast' ? 'gemini-2.5-flash' : 'gemini-2.5-pro';
+  const fallbackModel = primaryModel === 'gemini-2.5-flash' ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
   const baseInstruction = ROLE_SYSTEM_PROMPTS[params.roleId] || ROLE_SYSTEM_PROMPTS.crop_advisor;
   const systemInstruction = `${baseInstruction}\n\nLive Marketplace Snapshot:\n${params.marketplaceContext}`;
 
@@ -267,6 +267,7 @@ export async function runGeminiMarketplaceChat(params: {
       history: chatHistory,
       config: {
         systemInstruction,
+        temperature: 0.7,
       },
     });
     const response = await chat.sendMessage({ message: params.message.trim() });
@@ -281,13 +282,10 @@ export async function runGeminiMarketplaceChat(params: {
     return await attemptSend(primaryModel);
   } catch (primaryErr) {
     const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
-    if (msg.includes('503') || msg.includes('UNAVAILABLE')) {
-      try {
-        return await attemptSend(fallbackModel);
-      } catch (fallbackErr) {
-        throw new Error(formatGeminiErrorMessage(fallbackErr));
-      }
+    try {
+      return await attemptSend(fallbackModel);
+    } catch (fallbackErr) {
+      throw new Error(formatGeminiErrorMessage(fallbackErr));
     }
-    throw new Error(formatGeminiErrorMessage(primaryErr));
   }
 }
