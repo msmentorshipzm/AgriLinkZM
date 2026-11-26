@@ -1,7 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bot, RotateCcw, Send, Sparkles, X } from 'lucide-react';
 
-type GeminiAssistantRoleId = 'crop_advisor' | 'trust_guide' | 'buyer_concierge';
+type GeminiAssistantRoleId =
+  | 'crop_advisor'
+  | 'trust_guide'
+  | 'buyer_concierge'
+  | 'pricing_expert'
+  | 'veterinary_expert';
 type GeminiSpeedTier = 'standard' | 'fast';
 
 interface ChatTurn {
@@ -18,7 +23,7 @@ const ROLE_OPTIONS: Array<{
 }> = [
   {
     id: 'crop_advisor',
-    label: 'Agronomy & Produce Advisor',
+    label: 'Agronomy & Produce Advisor (Gemini 4 Hydrogen)',
     subtitle: 'Zambian maize grading, horticulture, poultry, aquaculture & ZMW pricing',
     starters: [
       'What moisture level & bag weight standards apply to Grade A maize in Zambia?',
@@ -26,8 +31,17 @@ const ROLE_OPTIONS: Array<{
     ],
   },
   {
+    id: 'pricing_expert',
+    label: 'Market Pricing & Logistics Analyst (Gemini 3.1 Flash Pro)',
+    subtitle: 'Wholesale vs retail price benchmarks across Lusaka, Kitwe & Chipata',
+    starters: [
+      'What is the current wholesale price trend for 50kg white maize and soya beans?',
+      'How do I calculate transport and cold-chain costs from Siavonga to Lusaka?',
+    ],
+  },
+  {
     id: 'trust_guide',
-    label: 'Trust & Verification Guide',
+    label: 'Trust & Verification Guide (Gemini 1.5 Pro)',
     subtitle: 'Tier 1-3 KYC checks, MoMo name matching & anti-scam buyer protection',
     starters: [
       'How do Tier 1 NRC, Tier 2 PACRA/ZRA, and Tier 3 Site-Verified checks work?',
@@ -35,8 +49,17 @@ const ROLE_OPTIONS: Array<{
     ],
   },
   {
+    id: 'veterinary_expert',
+    label: 'Livestock & Health Specialist (Gemini 2.5 Flash)',
+    subtitle: 'Poultry vaccination, fish health and livestock disease prevention',
+    starters: [
+      'What vaccination schedule should I follow for Ross 308 broiler chickens?',
+      'How do I maintain optimal water oxygen levels for Lake Kariba tilapia cages?',
+    ],
+  },
+  {
     id: 'buyer_concierge',
-    label: 'Buyer Sourcing Assistant',
+    label: 'Buyer Sourcing Assistant (Gemini Flash Ultra)',
     subtitle: 'Provincial sourcing, radius search & transport planning across 10 provinces',
     starters: [
       'Which active commodities are available near Lusaka or Copperbelt right now?',
